@@ -133,6 +133,8 @@ export interface HarnessConfig {
   temps?: { enabled: boolean; maxPerAgent: number; maxTotal: number; tokenCap: number };
   /** Folder of hire templates (mirrors main config). */
   hireTemplatesDir?: string;
+  /** Ticket key prefix for kanban cards (mirrors main config). */
+  ticketPrefix?: string;
   autoDeliveryPausedAgents?: string[];
   maxTurns?: number;
   circuitBreaker?: CircuitBreakerConfig;

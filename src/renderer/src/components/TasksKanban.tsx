@@ -7,6 +7,7 @@ import { Icon } from './Icon';
 import { useStore } from '@/store/store';
 import { MarkdownPreview } from '@/markdown/MarkdownPreview';
 import { useRtl } from '@/i18n/useDirection';
+import { DATE_RANGES, inDateRange, type DateRange } from '@shared/taskFilters';
 
 /** A card on the task kanban. Mirrors HiveTask in the main/preload process —
  *  re-declared locally so the renderer doesn't reach into the preload package
@@ -34,6 +35,8 @@ export interface HiveTask {
   /** First-class human feedback: the god appends {q} when a card needs the
    *  human; the ASK ME view fills in {a}. Full history stays on the card. */
   humanQA?: HumanQA[];
+  /** Short ticket key (OF-12) from hive/tickets.json; display only. */
+  ticket?: string;
 }
 
 /** The card's currently open question for the human, if any. An entry the human
@@ -111,6 +114,47 @@ export function parseTasks(raw: unknown): HiveTask[] {
     }));
 }
 
+/** The parsed board with ticket keys attached. Keys are best-effort: without
+ *  them the board still renders, on card ids alone. */
+export async function loadBoard(): Promise<HiveTask[]> {
+  const [raw, tickets] = await Promise.all([
+    window.cth.hiveTasks(),
+    window.cth.ticketKeys().catch(() => ({ prefix: '', keys: {} as Record<string, string> }))
+  ]);
+  return parseTasks(raw).map((t) => (tickets.keys[t.id] ? { ...t, ticket: tickets.keys[t.id] } : t));
+}
+
+/** Date chips shared by the board and the agent Tasks tab. */
+export function DateRangeChips({ value, onChange }: { value: DateRange; onChange: (r: DateRange) => void }) {
+  const { t } = useTranslation();
+  return (
+    <span style={{ display: 'inline-flex', gap: 4 }}>
+      {DATE_RANGES.map((r) => (
+        <button
+          key={r}
+          onClick={() => onChange(r)}
+          style={{
+            padding: '1px 6px 0', border: 'none', cursor: 'pointer',
+            background: value === r ? 'var(--cth-lemon-light)' : 'transparent',
+            boxShadow: 'inset 0 0 0 1px var(--cth-ink-100)',
+            fontFamily: 'var(--cth-font-ui)', fontSize: 11, color: 'var(--cth-ink-900)'
+          }}
+        >{t(`kanban.range.${r}`)}</button>
+      ))}
+    </span>
+  );
+}
+
+/** "OF-12 · bmt-12": the ticket key the human uses, then the id agents use. */
+export function TaskHandle({ task }: { task: HiveTask }) {
+  return (
+    <span style={{ fontFamily: 'var(--cth-font-mono)', fontSize: 10, color: 'var(--cth-ink-500)' }}>
+      {task.ticket && <b style={{ color: 'var(--cth-ink-900)' }}>{task.ticket}</b>}
+      {task.ticket ? ` · ${task.id}` : task.id}
+    </span>
+  );
+}
+
 /**
  * Task kanban over hive/tasks.json — a READ surface. Polls every 5s; cards
  * carry just the title and open the app-wide detail overlay on click. The god
@@ -121,6 +165,7 @@ export function TasksKanban() {
   const { t } = useTranslation();
   const agents = useStore((s) => s.agents);
   const [tasks, setTasks] = useState<HiveTask[]>([]);
+  const [range, setRange] = useState<DateRange>('all');
   // Detail view: cards show just the title — clicking one opens the full
   // breakdown as an APP-WIDE overlay over the office floor (see
   // TaskDetailOverlay) — the content grows (contracts, deps, human Q&A), so it
@@ -129,7 +174,7 @@ export function TasksKanban() {
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async () => {
-    try { setTasks(parseTasks(await window.cth.hiveTasks())); } catch { /* keep last good */ }
+    try { setTasks(await loadBoard()); } catch { /* keep last good */ }
   }, []);
 
   // Dismiss a card off the board (human-initiated). The kanban is otherwise the
@@ -161,6 +206,8 @@ export function TasksKanban() {
         ?? id)
       : undefined;
 
+  const shown = tasks.filter((task) => inDateRange(task.createdAt, range));
+
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: 'var(--cth-paper-200)', position: 'relative' }}>
       {/* Toolbar — read-only: the god is the ledger's writer. New work enters
@@ -171,8 +218,9 @@ export function TasksKanban() {
         borderBottom: '1px solid var(--cth-ink-300)'
       }}>
         <span style={{ fontFamily: 'var(--cth-font-display)', fontSize: 9, color: 'var(--cth-ink-500)' }}>
-          {t('kanban.count', { count: tasks.length })}
+          {t('kanban.count', { count: shown.length })}
         </span>
+        <DateRangeChips value={range} onChange={setRange} />
         <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--cth-ink-300)' }}>
           {t('kanban.newWorkHint')}
         </span>
@@ -183,7 +231,7 @@ export function TasksKanban() {
         flex: 1, minHeight: 0, display: 'flex', gap: 8, padding: 10, overflowX: 'auto'
       }}>
         {COLUMNS.map((col) => {
-          const cards = tasks.filter((t) => t.status === col.key);
+          const cards = shown.filter((t) => t.status === col.key);
           return (
             <div key={col.key} style={{
               flex: '1 1 0', minWidth: 170, display: 'flex', flexDirection: 'column',
@@ -255,10 +303,7 @@ function TaskCard({ task, accent, assigneeName, onOpen, onDismiss }: {
               because it's an identifier you retype. Sits inside the text
               column, so the 18px right padding keeps it clear of the ✕ and
               the '?' badge. */}
-          <span style={{
-            fontFamily: 'var(--cth-font-mono)', fontSize: 10,
-            color: 'var(--cth-ink-500)'
-          }}>{task.id}</span>
+          <TaskHandle task={task} />
           <span style={{
             fontFamily: 'var(--cth-font-ui)', fontSize: 12, lineHeight: '16px',
             color: 'var(--cth-ink-900)',
@@ -347,9 +392,7 @@ export function TaskDetail({ task, all, assigneeName, onMove, onAssign, onClose 
               {/* The id leads the row for the same reason it leads on the card:
                   it is the handle every dispatch and every message uses to name
                   this task, so it should be the first thing here too. */}
-              <span style={{
-                fontFamily: 'var(--cth-font-mono)', fontSize: 10, color: 'var(--cth-ink-500)'
-              }}>{task.id}</span>
+              <TaskHandle task={task} />
               <span style={{
                 fontFamily: 'var(--cth-font-display)', fontSize: 8, padding: '2px 6px 1px',
                 background: col.accent, color: 'var(--cth-ink-900)', boxShadow: 'inset 0 0 0 1px var(--cth-ink-300)'

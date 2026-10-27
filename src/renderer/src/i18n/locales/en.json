@@ -129,7 +129,8 @@
     "terminal": "terminal",
     "git": "git",
     "messages": "messages",
-    "traces": "traces"
+    "traces": "traces",
+    "tasks": "tasks"
   },
   "toolWaterfall": {
     "fresh": "fresh {{tokens}}t",
@@ -1363,7 +1364,24 @@
     "awaitingAnswer": "AWAITING YOUR ANSWER — ASK ME TAB",
     "dependsOn": "DEPENDS ON",
     "assign": "assign",
-    "priority": "Priority {{level}}/5"
+    "priority": "Priority {{level}}/5",
+    "range": {
+      "all": "all",
+      "today": "today",
+      "week": "7 days",
+      "month": "30 days"
+    }
+  },
+  "agentTasks": {
+    "count": "{{open}} open · {{done}} done",
+    "empty": "No cards assigned to this agent in this range.",
+    "needsYou": "needs you",
+    "status": {
+      "todo": "to do",
+      "doing": "in progress",
+      "blocked": "blocked",
+      "done": "done"
+    }
   },
   "queueComposer": {
     "recording": "● recording — click stop to transcribe",

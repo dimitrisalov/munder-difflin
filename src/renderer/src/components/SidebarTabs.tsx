@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { type SidebarTab } from '@/store/store';
 import { type AccentColorName } from '@/design/tokens';
@@ -9,8 +10,13 @@ const TABS: { key: SidebarTab; labelKey: string; icon: IconName }[] = [
   { key: 'terminal', labelKey: 'sidebar.terminal', icon: 'terminal' },
   { key: 'git',      labelKey: 'sidebar.git',      icon: 'code' },
   { key: 'messages', labelKey: 'sidebar.messages', icon: 'bell' },
-  { key: 'traces',   labelKey: 'sidebar.traces',   icon: 'web' }
+  { key: 'traces',   labelKey: 'sidebar.traces',   icon: 'web' },
+  { key: 'tasks',    labelKey: 'sidebar.tasks',    icon: 'ledger' }
 ];
+
+/** Below this strip width the labels give way to icons (tooltips keep the
+ *  names): five labelled tabs need about 490px in the pixel font. */
+const COMPACT_BELOW = 500;
 
 export interface SidebarTabsProps {
   current: SidebarTab;
@@ -20,8 +26,20 @@ export interface SidebarTabsProps {
 
 export function SidebarTabs({ current, accent, onChange }: SidebarTabsProps) {
   const { t } = useTranslation();
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0;
+      if (w > 0) setCompact(w < COMPACT_BELOW);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   return (
-    <div style={{
+    <div ref={ref} style={{
       display: 'flex',
       gap: 0,
       background: 'var(--cth-cream-200)',
@@ -34,6 +52,8 @@ export function SidebarTabs({ current, accent, onChange }: SidebarTabsProps) {
           <button
             key={tab.key}
             onClick={() => onChange(tab.key)}
+            title={compact ? t(tab.labelKey) : undefined}
+            aria-label={t(tab.labelKey)}
             style={{
               flex: 1,
               height: 36,
@@ -54,7 +74,7 @@ export function SidebarTabs({ current, accent, onChange }: SidebarTabsProps) {
               gap: 6
             }}
           >
-            <Icon name={tab.icon} /> {t(tab.labelKey).toUpperCase()}
+            <Icon name={tab.icon} />{!compact && ` ${t(tab.labelKey).toUpperCase()}`}
           </button>
         );
       })}

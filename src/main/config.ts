@@ -270,6 +270,9 @@ export interface HarnessConfig {
   /** Folder of hire templates (`*.hire.json`) offered in Add Agent and used as
    *  the default place to export an agent to (wave 3). Unset = none. */
   hireTemplatesDir?: string;
+  /** Ticket key prefix for kanban cards (OF-12): 1–6 letters/digits, starting
+   *  with a letter. Unset = "OF". See tickets-core.cjs. */
+  ticketPrefix?: string;
   /** Agent ids whose automatic inbox/queue delivery is paused. Pending messages
    *  stay durable until the operator explicitly resumes delivery. */
   autoDeliveryPausedAgents?: string[];

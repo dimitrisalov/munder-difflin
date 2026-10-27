@@ -129,7 +129,8 @@
     "terminal": "الطرفية",
     "git": "git",
     "messages": "الرسائل",
-    "traces": "التتبّع"
+    "traces": "التتبّع",
+    "tasks": "المهام"
   },
   "toolWaterfall": {
     "fresh": "جديد {{tokens}}ر",
@@ -1363,7 +1364,24 @@
     "awaitingAnswer": "بانتظار إجابتك — تبويب اسألني",
     "dependsOn": "يعتمد على",
     "assign": "إسناد",
-    "priority": "الأولوية {{level}}/5"
+    "priority": "الأولوية {{level}}/5",
+    "range": {
+      "all": "الكل",
+      "today": "اليوم",
+      "week": "7 أيام",
+      "month": "30 يومًا"
+    }
+  },
+  "agentTasks": {
+    "count": "{{open}} مفتوحة · {{done}} منجزة",
+    "empty": "لا توجد بطاقات مسندة إلى هذا الوكيل في هذه الفترة.",
+    "needsYou": "بحاجة إليك",
+    "status": {
+      "todo": "للتنفيذ",
+      "doing": "قيد التنفيذ",
+      "blocked": "متوقفة",
+      "done": "منجزة"
+    }
   },
   "queueComposer": {
     "recording": "● يسجّل — انقر إيقاف للتفريغ النصي",

@@ -374,6 +374,8 @@ export interface HarnessConfig {
   temps?: { enabled: boolean; maxPerAgent: number; maxTotal: number; tokenCap: number };
   /** Folder of hire templates (mirrors main config). */
   hireTemplatesDir?: string;
+  /** Ticket key prefix for kanban cards (mirrors main config). */
+  ticketPrefix?: string;
   autoDeliveryPausedAgents?: string[];
   maxTurns?: number;
   circuitBreaker?: CircuitBreakerConfig;
@@ -1021,6 +1023,9 @@ const api = {
     accent?: string; provider?: string; model?: string; command?: string; isolate?: boolean;
   }): Promise<{ ok: boolean; path?: string; error?: string; dropped: string[] }> =>
     ipcRenderer.invoke('hire:exportAgent', agent),
+  /** Ticket keys for the board: task id → "OF-12" (new cards get numbered). */
+  ticketKeys: (): Promise<{ prefix: string; keys: Record<string, string> }> =>
+    ipcRenderer.invoke('tickets:get'),
   /** The hire template library: valid manifests in the chosen folder. */
   listHireTemplates: (): Promise<{ dir: string | null; templates: { file: string; manifest: HireManifest }[]; errors: string[] }> =>
     ipcRenderer.invoke('hire:listTemplates'),

@@ -3025,6 +3025,10 @@ There are two shared surfaces, both in the hive root:
 - \`board.md\` — the freeform narrative plan. The god agent is its sole scribe; others \`propose\` edits.
 - \`tasks.json\` — the structured task ledger (a kanban: \`todo / doing / blocked / done\`, with title,
   assignee, priority, deps). Keep the task you're working reflected in its status.
+- \`tickets.json\` — written by the harness, never by agents: a short ticket key per card id
+  (\`OF-12\`), which is how the human names cards from the phone. \`byId\` maps card id → number.
+  When a message carries a \`[tickets] OF-12 = task "…"\` line, the harness already resolved the
+  keys the human typed to card ids for you.
 
 ## Asking the human (the ASK ME card)
 When a card can only move with the human — a question to answer, or an action only they can do

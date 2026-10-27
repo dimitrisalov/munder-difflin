@@ -38,7 +38,9 @@ function copyMainSidecars() {
     // Mobile office panel, required by panel.ts.
     ['src/main/panel-core.cjs', 'out/main/panel-core.cjs'],
     // Temps any agent may start, required by temps.ts.
-    ['src/main/temps-core.cjs', 'out/main/temps-core.cjs']
+    ['src/main/temps-core.cjs', 'out/main/temps-core.cjs'],
+    // Ticket keys for kanban cards, required by tickets.ts.
+    ['src/main/tickets-core.cjs', 'out/main/tickets-core.cjs']
   ];
   return {
     name: 'copy-main-cjs-sidecars',

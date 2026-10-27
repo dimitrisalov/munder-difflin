@@ -44,6 +44,7 @@ import { transcribeVoice, resolveEngine, validLocalUrl, type VoiceSettings, type
 import { PeriodLimitTracker, periodCore, type LimitItem } from './periodLimits';
 import { PanelServer, panelCore } from './panel';
 import { tempsCore, TempLedgerStore, type TempsConfig } from './temps';
+import { TicketBook } from './tickets';
 import { networkInterfaces } from 'node:os';
 import {
   WebhookServer,
@@ -2061,6 +2062,24 @@ function hiveTaskList(): HiveTask[] {
   } catch { return []; }
 }
 
+/** Ticket keys (OF-12) for kanban cards, kept in hive/tickets.json (wave 3). */
+const ticketBook = new TicketBook(
+  () => { const root = hive.root(); return root ? join(root, 'tickets.json') : null; },
+  () => readConfig().ticketPrefix
+);
+
+/** Cards with their ticket key in front of the title, for the phone surfaces. */
+function withTicketTitles<T extends { id: string; title: string }>(tasks: T[]): T[] {
+  const keys = ticketBook.keys(tasks);
+  return tasks.map((t) => (keys[t.id] ? { ...t, title: `${keys[t.id]} ${t.title}` } : t));
+}
+
+/** "\n\n[tickets] OF-12 = task …" when the owner named ticket keys, else ''. */
+function ticketFootnoteFor(text: string): string {
+  const foot = ticketBook.footnote(text, hiveTaskList());
+  return foot ? `\n\n${foot}` : '';
+}
+
 /** Send one forwarded question, with a button per numbered option and a
  *  dismiss button, and remember what those buttons answer. */
 async function sendTelegramAsk(ask: TelegramAsk, lang: string): Promise<number[]> {
@@ -2195,7 +2214,7 @@ async function handleTelegramCommand(cmd: string, messageId: number, lang: strin
       return;
     case 'tasks':
       if (!hive.enabled()) { await telegramSendToOwner(S.hiveOff, messageId); return; }
-      await telegramSendToOwner(tgCore.formatTasks(hiveTaskList(), lang), messageId);
+      await telegramSendToOwner(tgCore.formatTasks(withTicketTitles(hiveTaskList()), lang), messageId);
       return;
     case 'panel': {
       const st = panelStatus();
@@ -2211,7 +2230,7 @@ async function handleTelegramCommand(cmd: string, messageId: number, lang: strin
     }
     case 'asks': {
       // Re-send every open question, even ones already delivered once.
-      const asks = tgCore.openAsks(hiveTaskList());
+      const asks = tgCore.openAsks(withTicketTitles(hiveTaskList()));
       if (asks.length === 0) { await telegramSendToOwner(S.noAsks, messageId); return; }
       for (const ask of asks) await sendTelegramAsk(ask, lang);
       return;
@@ -2270,14 +2289,15 @@ async function dispatchTelegramWork(
       to: 'god',
       act: 'request',
       subject: `[telegram] ${title}`,
-      body: `${protocol}\n${text}${attachments}${followUp}`,
+      body: `${protocol}\n${text}${attachments}${followUp}${ticketFootnoteFor(text)}`,
       requires_reply: false
     }, 'telegram');
   } catch (e) {
     console.error('[telegram] could not route to god:', e instanceof Error ? e.message : e);
   }
 
-  const ids = await telegramSendToOwner(followUpOf ? S.acceptedFollowUp(followUpOf) : S.accepted(taskId), d.messageId);
+  const ticket = ticketBook.keys(hiveTaskList())[taskId];
+  const ids = await telegramSendToOwner(followUpOf ? S.acceptedFollowUp(followUpOf) : S.accepted(ticket ?? taskId), d.messageId);
   rememberTelegramMessages(ids, { kind: 'task', taskId });
   if (failed > 0) await telegramSendToOwner(S.filesFailed(failed), d.messageId);
 }
@@ -2324,7 +2344,7 @@ async function pollTelegramOutbound(): Promise<void> {
   const lang = s.lang ?? 'ru';
   telegramWatching = true;
   try {
-    const tasks = hiveTaskList();
+    const tasks = withTicketTitles(hiveTaskList());
     const runtime = telegramRuntime();
 
     const asksNotified = new Set(runtime.asksNotified ?? []);
@@ -2485,7 +2505,7 @@ async function dispatchPanelTask(text: string): Promise<{ ok: boolean; taskId?: 
     ? tgCore.buildRequestProtocol({ nodeCommand: hive.nodeCommand(), helperPath: telegramReplyScriptPath(), messageId: 0, taskId, source: 'panel' })
     : `[Inbound from the owner's mobile panel, tracked as kanban card ${taskId}. When finished set the card's status to 'done' and fill its 'result'.]`;
   try {
-    hive.send({ to: 'god', act: 'request', subject: `[panel] ${title}`, body: `${header}\n${text}`, requires_reply: false }, 'human');
+    hive.send({ to: 'god', act: 'request', subject: `[panel] ${title}`, body: `${header}\n${text}${ticketFootnoteFor(text)}`, requires_reply: false }, 'human');
   } catch (e) {
     console.error('[panel] could not route to god:', e instanceof Error ? e.message : e);
   }
@@ -2508,7 +2528,7 @@ async function startPanel(): Promise<ReturnType<typeof panelStatus>> {
     getToken: () => panelSettings().token,
     getState: () => panelCore.buildState({
       registry: hive.enabled() ? hive.registry() : { godId: null, agents: {} },
-      tasks: hiveTaskList(),
+      tasks: withTicketTitles(hiveTaskList()),
       limits: { config: readConfig().periodLimits ?? {}, usage: periodTracker.snapshot() },
       now: Date.now()
     }),
@@ -4322,6 +4342,11 @@ ipcMain.handle('hive:setAgentHold', (_evt, id: unknown, hold: unknown) => {
 });
 ipcMain.handle('hive:board', () => hive.board());
 ipcMain.handle('hive:tasks', () => hive.tasks());
+/** Ticket keys for the board (task id → OF-12), numbering any new cards. */
+ipcMain.handle('tickets:get', () => ({
+  prefix: ticketBook.prefixNow(),
+  keys: hive.enabled() ? ticketBook.keys(hiveTaskList()) : {}
+}));
 ipcMain.handle('hive:log', (_evt, n: unknown) => hive.logTail(typeof n === 'number' ? n : 200));
 ipcMain.handle('hive:memory', (_evt, id: unknown) => (typeof id === 'string' ? hive.memory(id) : ''));
 ipcMain.handle('hive:inbox', (_evt, id: unknown) => (typeof id === 'string' ? hive.inbox(id) : []));

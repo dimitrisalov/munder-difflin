@@ -14,6 +14,8 @@ const MAIN_ASSETS = [
   ['src/main/panel-core.cjs', 'out/main/panel-core.cjs'],
   // Temps any agent may start (pure CJS) — required by temps.ts.
   ['src/main/temps-core.cjs', 'out/main/temps-core.cjs'],
+  // Ticket keys for kanban cards (pure CJS) — required by tickets.ts.
+  ['src/main/tickets-core.cjs', 'out/main/tickets-core.cjs'],
   // Knowledge Graph core (pure-JS, no native deps) — required by knowledge.ts.
   ['src/main/kg-core.cjs', 'out/main/kg-core.cjs'],
 ];
