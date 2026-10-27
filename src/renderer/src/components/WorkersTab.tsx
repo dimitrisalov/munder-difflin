@@ -119,6 +119,12 @@ export function WorkersTab() {
                       fontFamily: 'var(--cth-font-ui)', fontSize: 12, fontWeight: 600, color: 'var(--cth-ink-900)',
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
                     }}>{w.name}</span>
+                    {w.parent && (
+                      <span title={t('workersTab.tempOfTitle')} style={{
+                        fontFamily: 'var(--cth-font-mono)', fontSize: 10, color: 'var(--cth-ink-700)',
+                        boxShadow: 'inset 0 0 0 1px var(--cth-ink-100)', padding: '0 5px', whiteSpace: 'nowrap'
+                      }}>{t('workersTab.tempOf', { parent: w.parent })}</span>
+                    )}
                     {w.hasSlack && (
                       <span title={t('workersTab.repliesToSlack')} style={{
                         fontFamily: 'var(--cth-font-mono)', fontSize: 10, color: 'var(--cth-ink-700)',

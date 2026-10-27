@@ -302,7 +302,13 @@
       "workSwitchAfter": "会话时长达到（分钟）",
       "killOnTrip": "触发即终止",
       "steerFirst": "先引导",
-      "saved": "已保存"
+      "saved": "已保存",
+      "tempsTitle": "临时助手：任何智能体都可启动",
+      "tempsDesc": "智能体可以为任务的一部分启动短期助手或自身的克隆。助手完成后向它汇报并结束。助手消耗的 token 计入该智能体自己的限额。编排者仍使用自己的工作者队列。",
+      "tempsPerAgent": "每个智能体",
+      "tempsTotal": "整个办公室",
+      "tempsTokenCap": "每个助手的 token",
+      "tempsNoCap": "不限"
     },
     "memory": {
       "semanticMemory": "语义记忆",
@@ -1242,7 +1248,9 @@
     "uncapped": "无上限",
     "preserved": "保留的工作树（{{count}}）",
     "preservedIntro": "已完成工人的工作树中保留着未整合的工作——保留（绝不自动丢弃），并在工作合入其基础分支后自动回收。",
-    "keptAgo": "{{age}} 前保留"
+    "keptAgo": "{{age}} 前保留",
+    "tempOf": "{{parent}} 的临时助手",
+    "tempOfTitle": "该智能体为自己启动的临时助手"
   },
   "memoryGraph": {
     "topics": "主题",

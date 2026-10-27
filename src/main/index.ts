@@ -43,6 +43,7 @@ import {
 import { transcribeVoice, resolveEngine, validLocalUrl, type VoiceSettings, type TranscribeEngine } from './transcribe';
 import { PeriodLimitTracker, periodCore, type LimitItem } from './periodLimits';
 import { PanelServer, panelCore } from './panel';
+import { tempsCore, TempLedgerStore, type TempsConfig } from './temps';
 import { networkInterfaces } from 'node:os';
 import {
   WebhookServer,
@@ -385,6 +386,9 @@ interface WorkerRec {
   /** Per-worker TOTAL-token cap from the spawn-request (overrides the config
    *  default). 0/undefined = no per-request cap. P4 plumbing — unlimited today. */
   tokenCap?: number;
+  /** Set for a temp (wave 3): the agent that started it. Temps report to and
+   *  are reported to their parent, and their cap counts work tokens. */
+  parent?: string;
 }
 /** Live ephemeral workers by id. Populated by the spawn-request watcher; consulted
  *  by teardownPty so a finished/crashed/reaped worker's worktree is PRESERVED (not
@@ -527,6 +531,13 @@ function informGod(subject: string, body: string, slack?: { channel: string; thr
   } catch (e) {
     console.error('[worker] informGod failed:', e);
   }
+}
+
+/** Tell whoever owns this worker: the parent agent for a temp, god otherwise. */
+function informOwner(rec: WorkerRec, subject: string, body: string): void {
+  if (!rec.parent) { informGod(subject, body, rec.slack); return; }
+  try { hive.send({ to: rec.parent, act: 'inform', subject, body }, 'temps'); }
+  catch (e) { console.error('[temps] inform parent failed:', e); }
 }
 
 /** Gated worktree teardown for an ephemeral worker: remove it ONLY when it holds no
@@ -1202,6 +1213,9 @@ function breakerToast(title: string, body: string): void {
 /** Token limits per period: the incremental ledger fold behind the breaker's
  *  `limitTrip` input, `/limits` in Telegram and the Settings usage bars. */
 const periodTracker = new PeriodLimitTracker();
+/** Which temp belonged to which parent (wave 3), so a temp's tokens count
+ *  toward its parent's period limits even after the temp is gone. */
+const tempLedger = new TempLedgerStore(() => join(app.getPath('userData'), 'temps.json'));
 /** alertKey → when it was last announced. A condition that clears is dropped,
  *  so the next crossing announces again; one that holds is re-announced at
  *  most every LIMIT_RENOTIFY_MS. */
@@ -1304,7 +1318,7 @@ function runBreakerBeat(progressWindowMs: number): void {
   // toward the office total.
   const ledgerRoot = hive.root();
   if (ledgerRoot) void periodTracker.refresh(join(ledgerRoot, 'cost-ledger.jsonl'));
-  const periodVerdict = periodTracker.evaluate(readConfig().periodLimits, inputs.map((i) => i.agentId), now);
+  const periodVerdict = periodTracker.evaluate(readConfig().periodLimits, inputs.map((i) => i.agentId), now, tempLedger.parentOf());
   for (const input of inputs) {
     const trip = periodVerdict.trips.get(input.agentId);
     if (trip) input.limitTrip = trip;
@@ -3982,6 +3996,7 @@ ipcMain.handle('config:update', (_evt, patch: Partial<HarnessConfig>) => {
   // config per tick so it gates immediately; this is for the PROMPT, which is
   // built per spawn, so flipping the toggle reaches god the next time he starts.
   if (typeof patch?.orchestratorMaySpawn === 'boolean') hive.setOrchestratorMaySpawn(patch.orchestratorMaySpawn);
+  if (patch?.temps !== undefined) hive.setTemps(tempsConfig());
   if (!hiveWasEnabled && hive.enabled()) {
     console.log('[hive] harnessHome configured — bootstrapping hive services');
     try { bootstrapHiveServices(); } catch (e) { console.error('[hive] bootstrap after onboarding:', e); }
@@ -5705,6 +5720,168 @@ function workerTokensUsed(workerId: string): number {
   return s ? s.input + s.output + s.cacheRead + s.cacheCreation : 0;
 }
 
+// ─── Temps: temporary helpers any agent can start (wave 3) ──────────────────
+// An agent drops a request into its OWN folder, agents/<id>/temps/<name>.json —
+// the folder is the attribution. The rules (who may, how many, token caps) live
+// in temps-core.cjs; this is the spawn half. A temp rides the same lifecycle as
+// god's workers above (done-scan, idle and token reaping, safe teardown); the
+// difference is that its parent, not god, dispatches it and hears about it.
+
+function tempsConfig(): TempsConfig {
+  return tempsCore.sanitizeTempsConfig(readConfig().temps);
+}
+
+/** Work tokens (input + output + cache writes): what a temp's cap counts, like
+ *  the period limits it also falls under. */
+function workTokensUsed(agentId: string): number {
+  const s = usageProvider.getAgentUsage(agentId);
+  return s ? s.input + s.output + s.cacheCreation : 0;
+}
+
+function archiveTempRequest(filePath: string, sub: '.done' | '.failed'): void {
+  try {
+    const dir = join(dirname(filePath), sub);
+    mkdirSync(dir, { recursive: true });
+    renameSync(filePath, join(dir, basename(filePath)));
+  } catch (e) {
+    try { unlinkSync(filePath); } catch { /* noop */ }
+    console.error('[temps] archive failed:', e);
+  }
+}
+
+/** Scan every agent's temps/ folder. Off = requests stay where they are. */
+async function processTempRequests(): Promise<void> {
+  const cfg = tempsConfig();
+  const root = hive.root();
+  if (!cfg.enabled || !root) return;
+  const reg = hive.registry();
+  for (const parentId of Object.keys(reg.agents)) {
+    if (reg.agents[parentId]?.archived) continue;
+    let files: string[];
+    try { files = readdirSync(join(root, 'agents', parentId, 'temps')).filter((f) => f.endsWith('.json')).sort(); }
+    catch { continue; }
+    for (const f of files) {
+      if (await processTempRequest(join(root, 'agents', parentId, 'temps', f), parentId, cfg) === 'wait') break;
+    }
+  }
+}
+
+/** One request: run it, leave it queued ('wait'), or reject it and tell the parent. */
+async function processTempRequest(filePath: string, parentId: string, cfg: TempsConfig): Promise<'run' | 'wait' | 'fail'> {
+  const reg = hive.registry();
+  const parent = reg.agents[parentId];
+  const parentName = parent?.name ?? parentId;
+  const file = basename(filePath);
+  const fail = (reason: string): 'fail' => {
+    try {
+      hive.send({ to: parentId, act: 'inform', subject: `[temp not started] ${file}`,
+        body: `Your temp request ${file} was rejected: ${reason}. It was moved to temps/.failed/.` }, 'temps');
+    } catch { /* best-effort */ }
+    archiveTempRequest(filePath, '.failed');
+    return 'fail';
+  };
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(filePath, 'utf8'));
+  } catch (e) {
+    // A file still being written reads as broken JSON for a moment.
+    try { if (Date.now() - statSync(filePath).mtimeMs < 5000) return 'wait'; } catch { return 'wait'; }
+    return fail(`unparseable JSON (${e instanceof Error ? e.message : String(e)})`);
+  }
+  const req = tempsCore.readTempRequest(raw);
+  if (!req.ok) return fail(req.error);
+
+  const now = Date.now();
+  const limitTrip = periodTracker.evaluate(readConfig().periodLimits, [parentId], now, tempLedger.parentOf()).trips.get(parentId);
+  const gate = tempsCore.admit({
+    cfg, parentId, limitTrip,
+    eligible: tempsCore.parentEligible(parent, reg.godId ?? undefined),
+    live: [...liveWorkers.values()]
+  });
+  if (gate.verdict === 'wait') return 'wait';
+  if (gate.verdict === 'fail') return fail(gate.reason ?? 'not allowed');
+
+  const reqName = file.replace(/\.json$/i, '');
+  const id = tempsCore.tempId(parentId, reqName);
+  if (liveWorkers.has(id) || (reg.agents[id] && !reg.agents[id].archived)) {
+    return fail(`a temp named "${id}" is already on the floor; use another file name`);
+  }
+
+  // The parent's hire, as the renderer persisted it: the clone's command line
+  // and look come from there (the human approved that command at hire time).
+  const hire = (roster.read()?.agents ?? []).find((a) => (a as { id?: unknown })?.id === parentId) as
+    { command?: string; provider?: AgentProvider; cwd?: string; character?: string; accent?: string; goal?: string; description?: string } | undefined;
+  const cwd = expandTilde(hire?.cwd || parent?.cwd || '');
+  if (!cwd || !existsSync(cwd)) return fail(`the parent's folder is missing (${cwd || 'unset'})`);
+
+  const cfgSpawn = readConfig();
+  const launch = buildWorkerLaunch({
+    requestCommand: req.clone ? hire?.command : undefined,
+    requestProvider: hire?.provider ?? parent?.provider,
+    requestModel: req.model,
+    defaultCommand: cfgSpawn.defaultCommand,
+    autoMode: !!cfgSpawn.autoMode
+  });
+  if (!isSafeCommandName(launch.bin) && !isAbsolute(launch.bin)) return fail(`engine command "${launch.bin}" is not a plain command name`);
+  if (!ptyManager.isCommandAvailable(launch.bin)) return fail(`engine CLI "${launch.bin}" is not installed`);
+
+  let baseBranch = 'main';
+  if (req.isolate) {
+    try { const br = await getBranch(cwd); if ('current' in br && br.current) baseBranch = br.current; } catch { /* keep default */ }
+  }
+  const name = req.name || `${parentName} · ${reqName.slice(0, 24)}`;
+  const meta: AgentMeta = {
+    id, name, cwd,
+    provider: hire?.provider ?? parent?.provider,
+    role: req.clone ? (parent?.role || hire?.description || `clone of ${parentName}`) : `temp helper of ${parentName}`,
+    parent: parentId
+  };
+  const brokerEnv: Record<string, string> = {};
+  if (integrationBroker.running()) {
+    brokerEnv.MD_BROKER_URL = integrationBroker.url();
+    brokerEnv.MD_BROKER_TOKEN = integrationBroker.grant(id, integrations.enabledIds());
+  }
+  let res: { ok: boolean; error?: string; worktreePath?: string };
+  try {
+    res = await spawnAgentCore({
+      id, cwd, command: launch.bin, cols: 120, rows: 32, args: launch.args,
+      hive: meta, isolate: req.isolate, provider: meta.provider, env: brokerEnv
+    }, liveWebContents());
+  } catch (e) {
+    res = { ok: false, error: String(e) };
+  }
+  if (!res.ok) { integrationBroker.revoke(id); return fail(`spawn failed (${res.error ?? 'unknown error'})`); }
+
+  try {
+    liveWebContents()?.send('hive:agentSpawned', {
+      id, name,
+      provider: meta.provider ?? 'claude',
+      cwd: res.worktreePath ?? cwd,
+      command: launch.command,
+      role: meta.role,
+      worktreePath: res.worktreePath,
+      character: hire?.character,
+      accent: req.clone ? hire?.accent : undefined,
+      goal: req.clone ? hire?.goal : undefined,
+      parent: parentId
+    });
+  } catch { /* window torn down */ }
+
+  const tokenCap = tempsCore.effectiveCap(req.tokenCap, cfg.tokenCap);
+  liveWorkers.set(id, { workerId: id, reqId: id, name, baseBranch, spawnedAt: now, tokenCap: tokenCap || undefined, parent: parentId });
+  tempLedger.record(id, { parent: parentId, name, spawnedAt: now });
+  try {
+    hive.send({ to: id, conversation: `worker-${id}`, act: 'request', subject: name,
+      body: tempsCore.tempBrief({ parentId, parentName, objective: req.objective, clone: req.clone }) }, parentId);
+  } catch (e) {
+    console.error('[temps] dispatch failed:', e);
+  }
+  console.log(`[temps] ${parentId} started ${id}${req.clone ? ' (clone)' : ''}`);
+  archiveTempRequest(filePath, '.done');
+  return 'run';
+}
+
 /** Throttle for the GC sweep — git checks are cheap but pointless every 1.5s tick. */
 const GC_SWEEP_MS = 60_000;
 let lastGcSweepAt = 0;
@@ -5808,12 +5985,12 @@ async function ephemeralWorkerTick(): Promise<void> {
         if (unanswered.length > 0) {
           const oneLine = (s: string): string => s.replace(/[\r\n]+/g, ' ');
           const lines = unanswered.map((m) => `- ${m.act} ${oneLine(m.id)} from ${oneLine(m.from)}: "${oneLine(m.subject)}"`);
-          informGod(
+          informOwner(
+            rec,
             `[worker released — mail filed unread] ${workerId}`,
             `Worker ${workerId} signaled done and was released. These messages were still unread in its inbox and were filed under inbox/.done without an answer:\n`
             + lines.join('\n')
-            + `\nIf one of them is not the order it just completed, nobody is working on it — resend it to another agent or re-hire the worker.`,
-            rec.slack
+            + `\nIf one of them is not the order it just completed, nobody is working on it — resend it to another agent or re-hire the worker.`
           );
         }
         ptyManager.kill(workerId);
@@ -5824,14 +6001,14 @@ async function ephemeralWorkerTick(): Promise<void> {
       // worker's cumulative token use exceeds it; its committed work is preserved.
       const tokenCap = (rec.tokenCap && rec.tokenCap > 0) ? rec.tokenCap : defaultTokenCap;
       if (tokenCap > 0) {
-        const used = workerTokensUsed(workerId);
+        const used = rec.parent ? workTokensUsed(workerId) : workerTokensUsed(workerId);
         if (used > tokenCap) {
           rec.releasing = true;
           console.warn(`[worker] reaping ${workerId} — token cap (${used.toLocaleString()} > ${tokenCap.toLocaleString()})`);
-          informGod(
+          informOwner(
+            rec,
             `[worker reaped — token cap] ${workerId}`,
-            `Worker ${workerId} used ${used.toLocaleString()} tokens (> its cap of ${tokenCap.toLocaleString()}) and was reaped. Any committed work on its branch is preserved for you.`,
-            rec.slack
+            `Worker ${workerId} used ${used.toLocaleString()} tokens (> its cap of ${tokenCap.toLocaleString()}) and was reaped. Any committed work on its branch is preserved for you.`
           );
           ptyManager.kill(workerId);
           teardownPty(workerId);
@@ -5843,10 +6020,10 @@ async function ephemeralWorkerTick(): Promise<void> {
       if (idleMs > idleTimeoutMs) {
         rec.releasing = true;
         console.warn(`[worker] reaping idle ${workerId} (${Math.round(idleMs / 60000)}min idle)`);
-        informGod(
+        informOwner(
+          rec,
           `[worker reaped — idle] ${workerId}`,
-          `Worker ${workerId} produced no output for ${Math.round(idleMs / 60000)} min (> the ${Math.round(idleTimeoutMs / 60000)} min cap) and never signaled done, so it was reaped. Any committed work on its branch is preserved for you.`,
-          rec.slack
+          `Worker ${workerId} produced no output for ${Math.round(idleMs / 60000)} min (> the ${Math.round(idleTimeoutMs / 60000)} min cap) and never signaled done, so it was reaped. Any committed work on its branch is preserved for you.`
         );
         ptyManager.kill(workerId);
         teardownPty(workerId);
@@ -5871,10 +6048,13 @@ async function ephemeralWorkerTick(): Promise<void> {
       let files: string[] = [];
       try { files = readdirSync(dir).filter(f => f.endsWith('.json')).sort(); } catch { /* dir vanished */ }
       for (const f of files) {
-        if (liveWorkers.size >= maxWorkers) break;
+        // Temps have their own slots (Settings → Temps); only god's workers count here.
+        if ([...liveWorkers.values()].filter((w) => !w.parent).length >= maxWorkers) break;
         await processSpawnRequest(join(dir, f));
       }
     }
+    // (2b) Temps any agent asked for in its own agents/<id>/temps/ folder.
+    await processTempRequests();
 
     // (3) GC preserved worktrees whose work has since integrated. Throttled to
     //     GC_SWEEP_MS and a no-op when nothing is preserved (the common case).
@@ -5915,6 +6095,8 @@ interface WorkerSnapshot {
   hasSlack: boolean;
   releasing: boolean;
   status: 'releasing' | 'working';
+  /** The agent that started this temp; absent for god's workers. */
+  parent?: string;
 }
 /** Snapshot of a preserved-but-not-yet-GC'd worktree for the tab. */
 interface PreservedSnapshot {
@@ -5941,11 +6123,12 @@ ipcMain.handle('workers:list', (): { live: WorkerSnapshot[]; preserved: Preserve
       spawnedAt: rec.spawnedAt,
       ageMs: Math.max(0, now - rec.spawnedAt),
       idleMs: idle === undefined ? null : idle,
-      tokensUsed: workerTokensUsed(rec.workerId),
+      tokensUsed: rec.parent ? workTokensUsed(rec.workerId) : workerTokensUsed(rec.workerId),
       tokenCap: effCap > 0 ? effCap : null,
       hasSlack: !!rec.slack,
       releasing: !!rec.releasing,
-      status: rec.releasing ? 'releasing' : 'working'
+      status: rec.releasing ? 'releasing' : 'working',
+      parent: rec.parent
     };
   });
   const preserved: PreservedSnapshot[] = [...preservedWorktrees.values()].map((e) => ({
@@ -5985,6 +6168,7 @@ function bootstrapHiveServices(): void {
   // builder reads this, so an agent spawned earlier would never learn it.
   hive.setRuntimeInfo({ version: app.getVersion(), packaged: app.isPackaged, appPath: app.getAppPath() });
   hive.setOrchestratorMaySpawn(readConfig().orchestratorMaySpawn === true);
+  hive.setTemps(tempsConfig());
   // An app-start marker in the event log. log.jsonl had twelve event kinds and
   // none of them meant "the app restarted", so a relaunch, and more importantly a
   // switch between a packaged build and a local one, was invisible to every agent

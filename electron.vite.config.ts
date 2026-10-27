@@ -36,7 +36,9 @@ function copyMainSidecars() {
     // Token limits per period, required by periodLimits.ts.
     ['src/main/periodUsage.cjs', 'out/main/periodUsage.cjs'],
     // Mobile office panel, required by panel.ts.
-    ['src/main/panel-core.cjs', 'out/main/panel-core.cjs']
+    ['src/main/panel-core.cjs', 'out/main/panel-core.cjs'],
+    // Temps any agent may start, required by temps.ts.
+    ['src/main/temps-core.cjs', 'out/main/temps-core.cjs']
   ];
   return {
     name: 'copy-main-cjs-sidecars',

@@ -129,6 +129,8 @@ export interface HarnessConfig {
   periodLimits?: PeriodLimitsConfig;
   /** Fresh context on a switch of work (shared/workSwitch.ts). */
   workSwitchClear?: { enabled: boolean; minSessionMinutes: number; minContextTokens: number };
+  /** Temps any agent may start (mirrors main/temps.ts). */
+  temps?: { enabled: boolean; maxPerAgent: number; maxTotal: number; tokenCap: number };
   autoDeliveryPausedAgents?: string[];
   maxTurns?: number;
   circuitBreaker?: CircuitBreakerConfig;

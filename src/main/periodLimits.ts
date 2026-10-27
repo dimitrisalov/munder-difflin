@@ -41,7 +41,7 @@ interface PeriodCore {
   PERIODS: Record<LimitPeriod, number>;
   PERIOD_KEYS: LimitPeriod[];
   PeriodUsage: new () => PeriodUsageLike;
-  evaluateLimits: (u: PeriodUsageLike, cfg: PeriodLimitsConfig | undefined, agentIds: string[], now: number) =>
+  evaluateLimits: (u: PeriodUsageLike, cfg: PeriodLimitsConfig | undefined, agentIds: string[], now: number, parentOf?: Map<string, string>) =>
     { trips: Map<string, string>; warnings: LimitItem[]; over: LimitItem[] };
   alertKey: (item: LimitItem, level: 'warn' | 'over') => string;
   sanitizeLimits: (raw: unknown) => PeriodLimitsConfig;
@@ -73,10 +73,11 @@ export class PeriodLimitTracker {
       .finally(() => { this.folding = false; });
   }
 
-  /** Trips, warnings and overruns for this beat. Empty until `ready`. */
-  evaluate(cfg: PeriodLimitsConfig | undefined, agentIds: string[], now = Date.now()) {
+  /** Trips, warnings and overruns for this beat. Empty until `ready`.
+   *  `parentOf` (temp id → parent id) counts temps toward their parent. */
+  evaluate(cfg: PeriodLimitsConfig | undefined, agentIds: string[], now = Date.now(), parentOf?: Map<string, string>) {
     if (!this.warm) return { trips: new Map<string, string>(), warnings: [] as LimitItem[], over: [] as LimitItem[] };
-    return periodCore.evaluateLimits(this.usage, cfg, agentIds, now);
+    return periodCore.evaluateLimits(this.usage, cfg, agentIds, now, parentOf);
   }
 
   /** Usage per period for the office and every agent seen in the window. */

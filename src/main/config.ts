@@ -14,6 +14,7 @@ import { MAX_AGENT_TOKEN_CAP } from '../shared/tokenCaps';
 import { expandTilde, normalizeHiveHome } from './fs';
 import type { IntegrationRecord } from '../shared/integrations';
 import type { PeriodLimitsConfig } from './periodLimits';
+import type { TempsConfig } from './temps';
 import { DEFAULT_WORK_SWITCH, type WorkSwitchConfig } from '../shared/workSwitch';
 import {
   DEFAULT_CONTEXT_TRIGGER,
@@ -262,6 +263,10 @@ export interface HarnessConfig {
    *  writes handoff.md, clears, and starts new work from the note. On by
    *  default (see shared/workSwitch.ts); the renderer's inbox loop applies it. */
   workSwitchClear?: WorkSwitchConfig;
+  /** Temps (wave 3): any agent may start short-lived helpers from its own
+   *  agents/<id>/temps/ folder, within these limits. Off by default; read
+   *  through temps-core.cjs's sanitizeTempsConfig, never raw. */
+  temps?: TempsConfig;
   /** Agent ids whose automatic inbox/queue delivery is paused. Pending messages
    *  stay durable until the operator explicitly resumes delivery. */
   autoDeliveryPausedAgents?: string[];

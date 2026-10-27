@@ -12,6 +12,8 @@ const MAIN_ASSETS = [
   ['src/main/periodUsage.cjs', 'out/main/periodUsage.cjs'],
   // Mobile office panel (pure CJS) — required by panel.ts.
   ['src/main/panel-core.cjs', 'out/main/panel-core.cjs'],
+  // Temps any agent may start (pure CJS) — required by temps.ts.
+  ['src/main/temps-core.cjs', 'out/main/temps-core.cjs'],
   // Knowledge Graph core (pure-JS, no native deps) — required by knowledge.ts.
   ['src/main/kg-core.cjs', 'out/main/kg-core.cjs'],
 ];

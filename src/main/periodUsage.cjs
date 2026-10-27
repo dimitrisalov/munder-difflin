@@ -137,23 +137,37 @@ function validLimit(v) {
  * The orchestrator is never passed in here (the breaker never steers it), but
  * its usage still counts toward the office total.
  *
+ * Temps (temps-core.cjs) spend on their parent's behalf: with `parentOf`
+ * (temp id → parent id) a temp's tokens count toward its parent's own limit,
+ * and a parent over its limit trips its temps too.
+ *
  * @param usage     - a PeriodUsage instance
  * @param cfg       - { office?: {5h?,day?,week?,month?}, agents?: { [id]: {…} }, warnAt?: number }
  * @param agentIds  - the agents the breaker evaluates this beat
+ * @param parentOf  - optional Map (or object) temp id → parent id
  * @returns {{ trips: Map<string, string>, warnings: object[], over: object[] }}
  *   each warning/over item: { scope: 'office'|'agent', agentId?, period, used, limit }
  */
-function evaluateLimits(usage, cfg, agentIds, now) {
+function evaluateLimits(usage, cfg, agentIds, now, parentOf) {
   const trips = new Map();
   const warnings = [];
   const over = [];
   const c = cfg && typeof cfg === 'object' ? cfg : {};
   const warnAt = typeof c.warnAt === 'number' && c.warnAt > 0 && c.warnAt < 1 ? c.warnAt : DEFAULT_WARN_AT;
   const ids = Array.isArray(agentIds) ? agentIds : [];
+  const parents = parentOf instanceof Map ? parentOf : new Map(Object.entries(parentOf || {}));
+  // A running temp's parent is checked even when the parent itself is not on
+  // this beat's list (stopped, or between restarts), so its temps still stop.
+  const limitIds = [...new Set([...ids, ...ids.map((id) => parents.get(id)).filter(Boolean)])];
+  const usedBy = (agents, id) => {
+    let work = (agents.get(id) || { work: 0 }).work;
+    for (const [aid, a] of agents) if (parents.get(aid) === id) work += a.work;
+    return work;
+  };
 
   for (const period of PERIOD_KEYS) {
     const officeLimit = validLimit(c.office && c.office[period]);
-    const agentLimits = ids
+    const agentLimits = limitIds
       .map((id) => [id, validLimit(c.agents && c.agents[id] && c.agents[id][period])])
       .filter(([, l]) => l !== undefined);
     if (officeLimit === undefined && agentLimits.length === 0) continue;
@@ -173,7 +187,7 @@ function evaluateLimits(usage, cfg, agentIds, now) {
     }
 
     for (const [id, limit] of agentLimits) {
-      const used = (u.agents.get(id) || { work: 0 }).work;
+      const used = usedBy(u.agents, id);
       const item = { scope: 'agent', agentId: id, period, used, limit };
       if (used >= limit) {
         over.push(item);
@@ -182,6 +196,10 @@ function evaluateLimits(usage, cfg, agentIds, now) {
         warnings.push(item);
       }
     }
+  }
+  for (const id of ids) {
+    const parent = parents.get(id);
+    if (parent && !trips.has(id) && trips.has(parent)) trips.set(id, `parent ${parent} is over its limit: ${trips.get(parent)}`);
   }
   return { trips, warnings, over };
 }

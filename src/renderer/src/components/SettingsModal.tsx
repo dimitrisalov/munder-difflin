@@ -24,6 +24,7 @@ import { AiEnginesSettings } from './AiEnginesSettings';
 import { TelegramSettings } from './TelegramSettings';
 import { PeriodLimitsSettings } from './PeriodLimitsSettings';
 import { WorkSwitchSettings } from './WorkSwitchSettings';
+import { TempsSettings } from './TempsSettings';
 import { PanelSettings } from './PanelSettings';
 import { REALTIME_MODEL } from '@shared/realtimePricing';
 import { RealtimeDevicePicker } from '@/realtime/DevicePicker';
@@ -1374,6 +1375,11 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
 
                       {/* Fresh context on a switch of work (shared/workSwitch.ts). */}
                       <WorkSwitchSettings />
+
+                      <div style={{ height: 1, background: 'var(--cth-ink-300)' }} />
+
+                      {/* Temps any agent may start for itself (main/temps-core.cjs). */}
+                      <TempsSettings />
                     </>
                   )}
 

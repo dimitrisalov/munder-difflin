@@ -370,6 +370,8 @@ export interface HarnessConfig {
   periodLimits?: PeriodLimitsConfig;
   /** Fresh context on a switch of work (shared/workSwitch.ts). */
   workSwitchClear?: { enabled: boolean; minSessionMinutes: number; minContextTokens: number };
+  /** Temps any agent may start (mirrors main/temps.ts). */
+  temps?: { enabled: boolean; maxPerAgent: number; maxTotal: number; tokenCap: number };
   autoDeliveryPausedAgents?: string[];
   maxTurns?: number;
   circuitBreaker?: CircuitBreakerConfig;
@@ -611,6 +613,8 @@ export interface WorkerSnapshot {
   hasSlack: boolean;
   releasing: boolean;
   status: 'releasing' | 'working';
+  /** The agent that started this temp; absent for god's workers. */
+  parent?: string;
 }
 /** A worker worktree preserved at teardown, awaiting integration + GC. */
 export interface PreservedWorktreeSnapshot {
@@ -955,6 +959,10 @@ const api = {
       id: string; name: string; provider?: string; cwd: string;
       command?: string; role?: string; worktreePath?: string;
       character?: string; accent?: string;
+      /** Standing goal (a clone temp inherits its parent's). */
+      goal?: string;
+      /** Set for a temp: the agent that started it. */
+      parent?: string;
     }) => void
   ): (() => void) => {
     const listener = (_e: IpcRendererEvent, payload: Parameters<typeof cb>[0]) => cb(payload);

@@ -1084,6 +1084,7 @@ export function useHive(config: HarnessConfig | null): void {
         ptyId: rec.id,
         command: rec.command,
         provider: rec.provider as Agent['provider'],
+        goal: rec.goal?.trim() || undefined,
         isGod: false,
         recentTextTs: Date.now()
       };
