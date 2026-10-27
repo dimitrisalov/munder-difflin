@@ -25,6 +25,7 @@ import { TelegramSettings } from './TelegramSettings';
 import { PeriodLimitsSettings } from './PeriodLimitsSettings';
 import { WorkSwitchSettings } from './WorkSwitchSettings';
 import { TempsSettings } from './TempsSettings';
+import { BackupsSettings } from './BackupsSettings';
 import { IntegrationsStatus } from './IntegrationsStatus';
 import { PanelSettings } from './PanelSettings';
 import { REALTIME_MODEL } from '@shared/realtimePricing';
@@ -1442,6 +1443,10 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
                           </div>
                         )}
                       </div>
+
+                      <div style={{ height: 1, background: 'var(--cth-ink-300)' }} />
+                      {/* Backups of the hive + roster, and restore (wave 5). */}
+                      <BackupsSettings />
                     </>
                   )}
 

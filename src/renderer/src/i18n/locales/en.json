@@ -445,7 +445,25 @@
     "saved": "Saved",
     "saving": "Saving…",
     "unsavedChanges": "unsaved changes",
-    "unsavedWarning": "You have unsaved settings. Close anyway and lose them?"
+    "unsavedWarning": "You have unsaved settings. Close anyway and lose them?",
+    "backups": {
+      "title": "Backups",
+      "desc": "A copy of the agents' memory, tasks, tickets, board and messages, made at start and once a day. Everything from the last two days is kept, then one a day for two weeks.",
+      "now": "back up now",
+      "openFolder": "open folder",
+      "empty": "No backups yet.",
+      "done": "Backup made.",
+      "failed": "Failed: {{error}}",
+      "restore": "restore",
+      "restoring": "Restoring… the office will restart.",
+      "confirm": "Restore the office to {{when}}?\n\nEvery agent is stopped, their memory, tasks and board go back to that moment, and the office restarts. A copy of the current state is made first, so this can be undone.",
+      "files": "{{count}} files",
+      "more": "{{count}} more",
+      "reason_start": "at start",
+      "reason_daily": "daily",
+      "reason_manual": "by hand",
+      "reason_before-restore": "before a restore"
+    }
   },
   "commandCenter": {
     "title": "COMMAND CENTER",

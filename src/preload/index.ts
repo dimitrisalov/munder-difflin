@@ -620,6 +620,14 @@ export interface WorkerSnapshot {
   /** The agent that started this temp; absent for god's workers. */
   parent?: string;
 }
+/** One office backup (mirrors BackupInfo in main/backups.ts). */
+export interface OfficeBackup {
+  id: string;
+  at: string;
+  reason: 'start' | 'daily' | 'manual' | 'before-restore' | string;
+  files: number;
+  bytes: number;
+}
 /** Settings → Connections → Status (mirrors the main handler). */
 export interface IntegrationsStatus {
   items: { id: string; label?: string; state: 'on' | 'off' | 'error'; detail: string }[];
@@ -1069,6 +1077,16 @@ const api = {
     ipcRenderer.invoke('logs:info'),
   openOfficeLogFolder: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('logs:openFolder'),
+  /** Office backups (hive + roster), newest first. */
+  backupsList: (): Promise<OfficeBackup[]> =>
+    ipcRenderer.invoke('backups:list'),
+  backupsCreate: (): Promise<{ ok: boolean; backup?: OfficeBackup; error?: string }> =>
+    ipcRenderer.invoke('backups:create'),
+  backupsOpenFolder: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('backups:openFolder'),
+  /** Stops every terminal, restores, relaunches the app. Resolves only on failure. */
+  backupsRestore: (id: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('backups:restore', id),
   /** Capabilities catalog (signed, public-domain list) with this machine's state. */
   capabilitiesList: (force?: boolean): Promise<CapabilitiesList> =>
     ipcRenderer.invoke('capabilities:list', force === true),

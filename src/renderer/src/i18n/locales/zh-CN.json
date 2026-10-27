@@ -445,7 +445,25 @@
     "saved": "已保存",
     "saving": "保存中…",
     "unsavedChanges": "有未保存的更改",
-    "unsavedWarning": "你有未保存的设置。仍要关闭并放弃这些更改吗？"
+    "unsavedWarning": "你有未保存的设置。仍要关闭并放弃这些更改吗？",
+    "backups": {
+      "title": "备份",
+      "desc": "代理的记忆、任务、工单、看板和消息的副本，在启动时和每天各做一次。保留最近两天的全部副本，之后两周内每天保留一份。",
+      "now": "立即备份",
+      "openFolder": "打开文件夹",
+      "empty": "还没有备份。",
+      "done": "备份完成。",
+      "failed": "失败：{{error}}",
+      "restore": "恢复",
+      "restoring": "正在恢复……办公室将重新启动。",
+      "confirm": "将办公室恢复到 {{when}} 的状态？\n\n所有代理都会停止，它们的记忆、任务和看板会回到那一刻，办公室将重新启动。恢复前会先备份当前状态，因此可以撤销。",
+      "files": "{{count}} 个文件",
+      "more": "还有 {{count}} 个",
+      "reason_start": "启动时",
+      "reason_daily": "每日",
+      "reason_manual": "手动",
+      "reason_before-restore": "恢复前"
+    }
   },
   "commandCenter": {
     "title": "命令中心",

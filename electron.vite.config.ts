@@ -44,7 +44,9 @@ function copyMainSidecars() {
     // Capabilities catalog checks, required by capabilities.ts.
     ['src/main/capabilities-core.cjs', 'out/main/capabilities-core.cjs'],
     // Office log file decisions, required by officeLog.ts.
-    ['src/main/officeLog-core.cjs', 'out/main/officeLog-core.cjs']
+    ['src/main/officeLog-core.cjs', 'out/main/officeLog-core.cjs'],
+    // Office backup decisions, required by backups.ts.
+    ['src/main/backups-core.cjs', 'out/main/backups-core.cjs']
   ];
   return {
     name: 'copy-main-cjs-sidecars',

@@ -20,6 +20,8 @@ const MAIN_ASSETS = [
   ['src/main/capabilities-core.cjs', 'out/main/capabilities-core.cjs'],
   // Office log file decisions (pure CJS) — required by officeLog.ts.
   ['src/main/officeLog-core.cjs', 'out/main/officeLog-core.cjs'],
+  // Office backup decisions (pure CJS) — required by backups.ts.
+  ['src/main/backups-core.cjs', 'out/main/backups-core.cjs'],
   // Knowledge Graph core (pure-JS, no native deps) — required by knowledge.ts.
   ['src/main/kg-core.cjs', 'out/main/kg-core.cjs'],
 ];

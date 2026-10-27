@@ -81,6 +81,7 @@ import { WorkerWakeWatchdog, WORKER_WAKE_REPORT_MS, activityEvidenceAt, type Wor
 import { inboxNudgeText } from '../shared/hiveNudge';
 import { remoteControlLabel, remoteControlLaunchArgs } from '../shared/providerAutomation';
 import { OfficeLog, officeLogCore } from './officeLog';
+import { OfficeBackups } from './backups';
 import { resolveGodName } from '../shared/godIdentity';
 import { fetchHireManifest, readHireManifestFiles, listHireTemplates } from './hire';
 import { buildHireManifest, hireFileName, serializeHire } from '../shared/hireExport';
@@ -6459,9 +6460,67 @@ function bootstrapHiveServices(): void {
   });
   memory.start(); // init shared palace + mine loop (no-op without mempalace)
   reflector.start(); // bound oversized memory.md files on a timer (no-op until threshold)
+  startBackups(); // a copy of the hive + roster now if due, then daily (wave 5)
 
   armAlwaysOnBeats();
 }
+
+// ─── Office backups (wave 5) ────────────────────────────────────────────────
+// The hive and the floor roster are copied to <harnessHome>/backups/ at start
+// (at most hourly) and once a day; see backups-core.cjs for what is kept.
+const officeBackups = new OfficeBackups(() => readConfig().harnessHome ?? null);
+const BACKUP_CHECK_MS = 60 * 60 * 1000;
+let backupTimer: ReturnType<typeof setInterval> | null = null;
+
+function runBackupIfDue(startingUp: boolean): void {
+  try {
+    const b = officeBackups.runIfDue(startingUp);
+    if (b) console.log(`[backups] ${b.reason} backup ${b.id}: ${b.files} files, ${b.bytes} bytes`);
+  } catch (e) {
+    console.error('[backups] backup failed:', e instanceof Error ? e.message : e);
+  }
+}
+
+function startBackups(): void {
+  runBackupIfDue(true);
+  if (backupTimer) clearInterval(backupTimer);
+  backupTimer = setInterval(() => runBackupIfDue(false), BACKUP_CHECK_MS);
+  backupTimer.unref?.();
+}
+
+ipcMain.handle('backups:list', () => officeBackups.list());
+ipcMain.handle('backups:create', () => {
+  try {
+    const b = officeBackups.create('manual');
+    if (!b) return { ok: false, error: 'no hive to back up yet' };
+    console.log(`[backups] manual backup ${b.id}: ${b.files} files`);
+    return { ok: true, backup: b };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+});
+ipcMain.handle('backups:openFolder', async () => {
+  const home = readConfig().harnessHome;
+  if (!home) return { ok: false, error: 'no office folder' };
+  const dir = join(home, 'backups');
+  try { mkdirSync(dir, { recursive: true }); } catch { /* openPath reports it */ }
+  const err = await shell.openPath(dir);
+  return err ? { ok: false, error: err } : { ok: true };
+});
+// Restoring rewrites files agents are using, so every terminal is stopped
+// first and the app relaunches after; agents come back with --resume and read
+// the restored memory, tasks and board. Same exit path as changeHome/resetAll.
+ipcMain.handle('backups:restore', (_evt, id: unknown) => {
+  if (typeof id !== 'string') return { ok: false, error: 'bad request' };
+  try { ptyManager.killAll(); } catch (e) { console.error('[backups] killAll:', e); }
+  const r = officeBackups.restore(id);
+  if (!r.ok) { console.error(`[backups] restore ${id} failed: ${r.error}`); return r; }
+  console.log(`[backups] restored ${id} (undo: ${r.undo ?? 'none'}); relaunching`);
+  allowQuit = true;
+  app.relaunch();
+  app.exit(0);
+  return r; // unreachable (process exits) — typed for the renderer
+});
 
 /** Cadence of the worker inbox-wake watchdog (#151). Well under the renderer's
  *  own nudge cooldown so a throttled window is caught within ~15s of a stall. */
