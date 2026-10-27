@@ -620,6 +620,39 @@ export interface WorkerSnapshot {
   /** The agent that started this temp; absent for god's workers. */
   parent?: string;
 }
+/** One row of the capabilities catalog (mirrors main/capabilities.ts), plus
+ *  what the app can do with it here. */
+export interface CapabilityEntry {
+  id: string;
+  name: string;
+  kind: 'mcp-server' | 'skill' | 'skill-pack' | 'plugin' | 'subagent-set' | 'hook-pack' | 'status-line' | 'tool' | 'agent' | 'app';
+  maker?: string;
+  tier?: 'vendor' | 'community' | 'first-party';
+  source?: string;
+  what: string;
+  purposes: string[];
+  worksWith: string[];
+  licence?: string;
+  reviewed: boolean;
+  can: { reads: boolean; writes: boolean; sends: boolean; spends: boolean; deletes: boolean };
+  signIn?: { kind: 'none' | 'key' | 'oauth'; secretNames: string[] };
+  install: { door: 'command' | 'skill-folder' | 'mcp-local' | 'none'; steps: { argv: string[]; label: string }[]; manual: string[]; url?: string; ref?: string };
+  /** The app may run its steps, one press each. */
+  oneClick: boolean;
+  /** A server this app bundles; "install" means turning it on. */
+  builtIn: boolean;
+  installed: boolean;
+}
+export interface CapabilitiesList {
+  ok: boolean;
+  source: 'network' | 'cache' | 'none';
+  error?: string;
+  issuedAt?: string;
+  checkedAt?: string;
+  purposes: { id: string; label: string }[];
+  featured: string[];
+  entries: CapabilityEntry[];
+}
 /** A worker worktree preserved at teardown, awaiting integration + GC. */
 export interface PreservedWorktreeSnapshot {
   workerId: string;
@@ -1023,6 +1056,18 @@ const api = {
     accent?: string; provider?: string; model?: string; command?: string; isolate?: boolean;
   }): Promise<{ ok: boolean; path?: string; error?: string; dropped: string[] }> =>
     ipcRenderer.invoke('hire:exportAgent', agent),
+  /** Capabilities catalog (signed, public-domain list) with this machine's state. */
+  capabilitiesList: (force?: boolean): Promise<CapabilitiesList> =>
+    ipcRenderer.invoke('capabilities:list', force === true),
+  /** Run one allowed install step in a visible terminal; returns its pty id. */
+  capabilitiesRunStep: (id: string, index: number): Promise<{ ok: boolean; ptyId?: string; argv?: string[]; error?: string }> =>
+    ipcRenderer.invoke('capabilities:runStep', id, index),
+  /** Turn on a catalog MCP server this app already bundles. */
+  capabilitiesEnableBuiltIn: (ref: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('capabilities:enableBuiltIn', ref),
+  /** Copy a reviewed catalog skill folder into ~/.claude/skills. */
+  capabilitiesInstallSkillFolder: (id: string): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('capabilities:installSkillFolder', id),
   /** Ticket keys for the board: task id → "OF-12" (new cards get numbered). */
   ticketKeys: (): Promise<{ prefix: string; keys: Record<string, string> }> =>
     ipcRenderer.invoke('tickets:get'),

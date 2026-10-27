@@ -40,7 +40,9 @@ function copyMainSidecars() {
     // Temps any agent may start, required by temps.ts.
     ['src/main/temps-core.cjs', 'out/main/temps-core.cjs'],
     // Ticket keys for kanban cards, required by tickets.ts.
-    ['src/main/tickets-core.cjs', 'out/main/tickets-core.cjs']
+    ['src/main/tickets-core.cjs', 'out/main/tickets-core.cjs'],
+    // Capabilities catalog checks, required by capabilities.ts.
+    ['src/main/capabilities-core.cjs', 'out/main/capabilities-core.cjs']
   ];
   return {
     name: 'copy-main-cjs-sidecars',

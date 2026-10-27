@@ -45,6 +45,8 @@ import { PeriodLimitTracker, periodCore, type LimitItem } from './periodLimits';
 import { PanelServer, panelCore } from './panel';
 import { tempsCore, TempLedgerStore, type TempsConfig } from './temps';
 import { TicketBook } from './tickets';
+import { CapabilityCatalog, capCore, localClaudeInventory } from './capabilities';
+import { mcpCatalogEntry } from '../shared/mcpCatalog';
 import { networkInterfaces } from 'node:os';
 import {
   WebhookServer,
@@ -4446,6 +4448,72 @@ ipcMain.handle('skills:install', async (_evt, url: unknown, name: unknown) => {
   }
   return installSkill(url, name);
 });
+// ─── Capabilities: the signed public-domain catalog (wave 4) ─────────────────
+// MCP servers, skills, plugins and tools from the CC0 awesome-agent-capabilities
+// list, used only when its signature checks out (capabilities-core.cjs). An
+// install runs ONE step per press, in a visible terminal, and only steps our own
+// policy allows; everything else is shown as manual steps.
+
+const capabilityCatalog = new CapabilityCatalog(() => join(app.getPath('userData'), 'capabilities-catalog.json'));
+let capInstallSeq = 0;
+
+ipcMain.handle('capabilities:list', async (_evt, force: unknown) => {
+  const loaded = await capabilityCatalog.load(force === true);
+  if (!loaded.catalog) return { ok: false, source: loaded.source, error: loaded.error ?? 'no catalog yet', entries: [], purposes: [], featured: [] };
+  const local = localClaudeInventory(homedir());
+  return {
+    ok: true,
+    source: loaded.source,
+    error: loaded.error,
+    issuedAt: loaded.issuedAt,
+    checkedAt: loaded.catalog.checkedAt,
+    purposes: loaded.catalog.purposes,
+    featured: loaded.catalog.featured,
+    entries: loaded.catalog.entries.map((e) => ({
+      ...e,
+      oneClick: capCore.oneClickSteps(e).length > 0,
+      builtIn: e.install.door === 'mcp-local' && !!e.install.ref && !!mcpCatalogEntry(e.install.ref),
+      installed: capCore.installedState(e, local)
+    }))
+  };
+});
+
+/** Run step `index` of an entry's one-press install in a visible terminal owned
+ *  by the asking window. Only steps from the verified list that our policy
+ *  allows; the renderer shows the command before the press. */
+ipcMain.handle('capabilities:runStep', async (evt, id: unknown, index: unknown) => {
+  if (typeof id !== 'string' || typeof index !== 'number') return { ok: false, error: 'bad request' };
+  const loaded = await capabilityCatalog.load(false);
+  const entry = loaded.catalog?.entries.find((e) => e.id === id);
+  if (!entry) return { ok: false, error: 'not in the verified catalog' };
+  const step = capCore.oneClickSteps(entry)[index];
+  if (!step) return { ok: false, error: 'the app does not run this step; follow the manual steps' };
+  const [bin, ...args] = step.argv;
+  if (!ptyManager.isCommandAvailable(bin)) return { ok: false, error: `${bin} is not installed on this machine` };
+  const ptyId = `cap-install-${++capInstallSeq}`;
+  const res = ptyManager.spawn({ id: ptyId, cwd: homedir(), command: bin, args, cols: 100, rows: 18 }, evt.sender);
+  return res.ok ? { ok: true, ptyId, argv: step.argv } : { ok: false, error: res.error ?? 'could not start the terminal' };
+});
+
+/** A catalog MCP server that this app already bundles: turn it on for agents. */
+ipcMain.handle('capabilities:enableBuiltIn', (_evt, ref: unknown) => {
+  if (typeof ref !== 'string' || !mcpCatalogEntry(ref)) return { ok: false, error: 'not a bundled server' };
+  const cfg = readConfig();
+  writeConfig({ mcpDefaults: { ...(cfg.mcpDefaults ?? {}), [ref]: { enabled: true } } });
+  return { ok: true };
+});
+
+/** A catalog skill shipped as a GitHub folder: copy it into ~/.claude/skills
+ *  with the same installer as the Skills tab. */
+ipcMain.handle('capabilities:installSkillFolder', async (_evt, id: unknown) => {
+  if (typeof id !== 'string') return { ok: false, error: 'bad request' };
+  const loaded = await capabilityCatalog.load(false);
+  const entry = loaded.catalog?.entries.find((e) => e.id === id);
+  if (!entry || !entry.reviewed || entry.install.door !== 'skill-folder' || !entry.install.url) return { ok: false, error: 'not a reviewed skill folder' };
+  const name = entry.install.url.replace(/\/+$/, '').split('/').pop() ?? entry.id;
+  return installSkill(entry.install.url, name);
+});
+
 /** Delete an installed skill. The guard rails live in uninstallSkill — it refuses
  *  any path it cannot prove is a skill folder inside a skills root. */
 ipcMain.handle('skills:uninstall', (_evt, path: unknown) => {
