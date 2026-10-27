@@ -6,6 +6,8 @@ const { dirname, join } = require('node:path');
 const ROOT = join(__dirname, '..');
 const MAIN_ASSETS = [
   ['src/main/slack-trigger.cjs', 'out/main/slack-trigger.cjs'],
+  // Telegram decision + formatting core (pure CJS) — required by index.ts/telegram.ts.
+  ['src/main/telegram-core.cjs', 'out/main/telegram-core.cjs'],
   // Knowledge Graph core (pure-JS, no native deps) — required by knowledge.ts.
   ['src/main/kg-core.cjs', 'out/main/kg-core.cjs'],
 ];

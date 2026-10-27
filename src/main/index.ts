@@ -36,6 +36,7 @@ import { PersistStore } from './db';
 import { readAgentUsage, readContextTokens, seedSessionTranscript, resolveSessionCwd } from './transcript';
 import { listIssues, listCIRuns } from './github';
 import { SlackWebhookServer, SlackReplyServer, postSlackReply, type SlackEventFile } from './slack';
+import { TelegramBot, TelegramReplyServer, sendTelegramText, downloadTelegramFile, type TelegramDecision } from './telegram';
 import {
   WebhookServer,
   type WebhookDispatch, type WebhookEndpointRef, type WebhookInbound, type WebhookTaskStatus
@@ -1772,6 +1773,464 @@ function stopSlackServer(): void {
   try { if (existsSync(slackReplyConfigPath())) unlinkSync(slackReplyConfigPath()); } catch { /* noop */ }
 }
 
+// ─── Telegram (the owner's phone ↔ Michael) ──────────────────────────────────
+// Long polling, so unlike Slack there is no public surface and no tunnel. Every
+// decision about an update (owner gate, pairing, commands) is in telegram-core.cjs;
+// this block turns decisions into hive work and watches the kanban for what the
+// owner should hear about: open ASK ME questions and finished Telegram tasks.
+//
+// State is kept in two small JSON files under userData — NOT in HarnessConfig,
+// so the bot token never rides `config:get` into the renderer, and NOT in the
+// sqlite kv, so a failed native DB build cannot silently drop the pairing.
+
+interface TelegramAsk { taskId: string; title: string; q: string; askedAt?: string }
+interface TelegramLedgerEntry { kind: 'ask' | 'task'; taskId: string; q?: string }
+interface TelegramLedger {
+  set(messageId: number, entry: TelegramLedgerEntry): void;
+  get(messageId: number): TelegramLedgerEntry | undefined;
+  toJSON(): unknown;
+}
+interface TelegramStrings {
+  paired: (name: string) => string;
+  help: string;
+  accepted: (taskId: string) => string;
+  acceptedFollowUp: (taskId: string) => string;
+  answerSaved: (title: string) => string;
+  answerStale: string;
+  noAsks: string;
+  hiveOff: string;
+  unknownCommand: string;
+  filesFailed: (n: number) => string;
+}
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const tgCore = require('./telegram-core.cjs') as {
+  newPairingCode: () => string;
+  openAsks: (tasks: unknown) => TelegramAsk[];
+  askKey: (ask: TelegramAsk) => string;
+  applyAnswer: (task: HiveTask, q: string, answer: string, nowIso: string) => HiveTask['humanQA'] | null;
+  MessageLedger: new (maxSize?: number, entries?: unknown) => TelegramLedger;
+  strings: (lang: string) => TelegramStrings;
+  formatDone: (task: HiveTask, lang: string) => string;
+  formatAsk: (ask: TelegramAsk, lang: string) => string;
+  formatStatus: (registry: unknown, tasks: unknown, lang: string) => string;
+  formatTasks: (tasks: unknown, lang: string) => string;
+  buildRequestProtocol: (o: { nodeCommand: string; helperPath: string; messageId: number; taskId: string }) => string;
+  escapeHtml: (s: string) => string;
+  truncate: (s: string, n: number) => string;
+};
+
+/** A pairing code is good for this long after Settings issues it. */
+const TELEGRAM_PAIRING_TTL_MS = 15 * 60 * 1000;
+/** How many delivered ask / done ids to remember (oldest dropped first). */
+const TELEGRAM_NOTIFIED_MAX = 1000;
+
+interface TelegramSettings {
+  enabled?: boolean;
+  botToken?: string;
+  botUsername?: string;
+  ownerId?: number;
+  ownerChatId?: number;
+  ownerName?: string;
+  pairingCode?: string;
+  pairingIssuedAt?: number;
+  lang?: 'ru' | 'en';
+}
+
+interface TelegramRuntime {
+  offset?: number;
+  ledger?: unknown;
+  asksNotified?: string[];
+  doneNotified?: string[];
+}
+
+interface TelegramStatus {
+  enabled: boolean;
+  hasToken: boolean;
+  running: boolean;
+  botUsername?: string;
+  paired: boolean;
+  ownerName?: string;
+  pairingCode?: string;
+  pairingLink?: string;
+  lang: 'ru' | 'en';
+  error?: string;
+}
+
+let telegramBot: TelegramBot | null = null;
+let telegramReplyServer: TelegramReplyServer | null = null;
+let telegramWatchTimer: ReturnType<typeof setInterval> | null = null;
+let telegramWatching = false;
+let telegramLastError: string | undefined;
+let telegramLedgerCache: TelegramLedger | null = null;
+/** Task ids already done when this session first looked — never announced. */
+let telegramDoneBaseline: Set<string> | null = null;
+/** Request messages an agent already answered directly through the helper, so
+ *  the done-summary is a fallback, not a duplicate. */
+const telegramDirectlyReplied = new Set<number>();
+
+function telegramSettingsPath(): string { return join(app.getPath('userData'), 'telegram.json'); }
+function telegramRuntimePath(): string { return join(app.getPath('userData'), 'telegram-runtime.json'); }
+function telegramReplyConfigPath(): string { return join(app.getPath('userData'), 'telegram-reply.json'); }
+function telegramFilesDir(): string { return join(app.getPath('userData'), 'telegram-files'); }
+function telegramReplyScriptPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'md-telegram-reply.cjs')
+    : join(app.getAppPath(), 'resources', 'md-telegram-reply.cjs');
+}
+
+function readJsonFile<T>(path: string): T | undefined {
+  try { return JSON.parse(readFileSync(path, 'utf8')) as T; } catch { return undefined; }
+}
+
+function telegramSettings(): TelegramSettings {
+  return readJsonFile<TelegramSettings>(telegramSettingsPath()) ?? {};
+}
+
+/** Merge and save. `undefined` in the patch clears that field. Owner-only file. */
+function writeTelegramSettings(patch: Partial<TelegramSettings>): TelegramSettings {
+  const next = { ...telegramSettings(), ...patch };
+  try { writeFileSync(telegramSettingsPath(), JSON.stringify(next), { mode: 0o600 }); }
+  catch (e) { console.error('[telegram] could not save settings:', e instanceof Error ? e.message : e); }
+  return next;
+}
+
+function telegramRuntime(): TelegramRuntime {
+  return readJsonFile<TelegramRuntime>(telegramRuntimePath()) ?? {};
+}
+
+function writeTelegramRuntime(patch: Partial<TelegramRuntime>): void {
+  try { writeFileSync(telegramRuntimePath(), JSON.stringify({ ...telegramRuntime(), ...patch }), { mode: 0o600 }); }
+  catch (e) { console.error('[telegram] could not save runtime state:', e instanceof Error ? e.message : e); }
+}
+
+/** The current pairing code, or undefined once it has expired. */
+function telegramPairingCode(): string | undefined {
+  const s = telegramSettings();
+  if (!s.pairingCode || !s.pairingIssuedAt) return undefined;
+  return Date.now() - s.pairingIssuedAt > TELEGRAM_PAIRING_TTL_MS ? undefined : s.pairingCode;
+}
+
+function telegramStatus(): TelegramStatus {
+  const s = telegramSettings();
+  const code = telegramPairingCode();
+  return {
+    enabled: s.enabled === true,
+    hasToken: !!s.botToken,
+    running: telegramBot?.isRunning === true,
+    botUsername: s.botUsername,
+    paired: s.ownerId !== undefined,
+    ownerName: s.ownerName,
+    pairingCode: code,
+    // Tapping this on the phone opens the bot and sends `/start <code>` for you.
+    pairingLink: code && s.botUsername ? `https://t.me/${s.botUsername}?start=${code}` : undefined,
+    lang: s.lang ?? 'ru',
+    error: telegramLastError
+  };
+}
+
+function notifyTelegramState(): void {
+  try { liveWebContents()?.send('telegram:state', telegramStatus()); } catch { /* window gone */ }
+}
+
+function telegramLedger(): TelegramLedger {
+  if (!telegramLedgerCache) telegramLedgerCache = new tgCore.MessageLedger(500, telegramRuntime().ledger);
+  return telegramLedgerCache;
+}
+
+function rememberTelegramMessages(ids: number[], entry: TelegramLedgerEntry): void {
+  if (ids.length === 0) return;
+  const ledger = telegramLedger();
+  for (const id of ids) ledger.set(id, entry);
+  writeTelegramRuntime({ ledger: ledger.toJSON() });
+}
+
+function cappedIds(set: Set<string>): string[] {
+  const all = [...set];
+  return all.length > TELEGRAM_NOTIFIED_MAX ? all.slice(all.length - TELEGRAM_NOTIFIED_MAX) : all;
+}
+
+/** Send Telegram HTML to the paired owner. Returns the sent message ids. */
+async function telegramSendToOwner(html: string, replyTo?: number): Promise<number[]> {
+  const s = telegramSettings();
+  if (!s.botToken || s.ownerChatId === undefined) return [];
+  const r = await sendTelegramText({ token: s.botToken, chatId: s.ownerChatId, text: html, html: true, replyTo });
+  if (!r.ok) console.error('[telegram] send failed:', r.error);
+  return r.messageIds;
+}
+
+function hiveTaskList(): HiveTask[] {
+  try {
+    const ledger = hive.tasks() as { tasks?: HiveTask[] };
+    return Array.isArray(ledger?.tasks) ? ledger.tasks : [];
+  } catch { return []; }
+}
+
+/** One decision from the polling loop → office work or a reply. */
+async function handleTelegramDecision(d: Exclude<TelegramDecision, { kind: 'ignore' }>): Promise<void> {
+  const lang = telegramSettings().lang ?? 'ru';
+  const S = tgCore.strings(lang);
+
+  if (d.kind === 'pair') {
+    writeTelegramSettings({
+      ownerId: d.userId, ownerChatId: d.chatId, ownerName: d.name,
+      pairingCode: undefined, pairingIssuedAt: undefined
+    });
+    notifyTelegramState();
+    await telegramSendToOwner(S.paired(tgCore.escapeHtml(d.name)));
+    void pollTelegramOutbound(); // deliver questions that were already waiting
+    return;
+  }
+
+  if (d.kind === 'command') {
+    await handleTelegramCommand(d.cmd, d.messageId, lang);
+    return;
+  }
+
+  if (!hive.enabled()) { await telegramSendToOwner(S.hiveOff, d.messageId); return; }
+
+  // A reply to one of our messages: an answer to a question, or a follow-up.
+  let followUpOf: string | undefined;
+  if (d.replyTo !== null) {
+    const entry = telegramLedger().get(d.replyTo);
+    if (entry?.kind === 'ask' && entry.q !== undefined && d.text) {
+      await answerTelegramAsk(entry.taskId, entry.q, d.text, d.messageId, lang);
+      return;
+    }
+    if (entry?.kind === 'task') followUpOf = entry.taskId;
+  }
+  await dispatchTelegramWork(d, followUpOf, lang);
+}
+
+async function handleTelegramCommand(cmd: string, messageId: number, lang: string): Promise<void> {
+  const S = tgCore.strings(lang);
+  switch (cmd) {
+    case 'start':
+    case 'help':
+      await telegramSendToOwner(S.help);
+      return;
+    case 'status':
+      if (!hive.enabled()) { await telegramSendToOwner(S.hiveOff, messageId); return; }
+      await telegramSendToOwner(tgCore.formatStatus(hive.registry(), hiveTaskList(), lang), messageId);
+      return;
+    case 'tasks':
+      if (!hive.enabled()) { await telegramSendToOwner(S.hiveOff, messageId); return; }
+      await telegramSendToOwner(tgCore.formatTasks(hiveTaskList(), lang), messageId);
+      return;
+    case 'asks': {
+      // Re-send every open question, even ones already delivered once.
+      const asks = tgCore.openAsks(hiveTaskList());
+      if (asks.length === 0) { await telegramSendToOwner(S.noAsks, messageId); return; }
+      for (const ask of asks) {
+        const ids = await telegramSendToOwner(tgCore.formatAsk(ask, lang));
+        rememberTelegramMessages(ids, { kind: 'ask', taskId: ask.taskId, q: ask.q });
+      }
+      return;
+    }
+    default:
+      await telegramSendToOwner(S.unknownCommand, messageId);
+  }
+}
+
+/** A new request from the owner → kanban card + a request to god, then an ack. */
+async function dispatchTelegramWork(
+  d: Extract<TelegramDecision, { kind: 'message' }>,
+  followUpOf: string | undefined,
+  lang: string
+): Promise<void> {
+  const S = tgCore.strings(lang);
+  const token = telegramSettings().botToken;
+  const taskId = `telegram-${randomBytes(6).toString('hex')}`;
+
+  const paths: string[] = [];
+  let failed = 0;
+  if (token) {
+    for (const f of d.files) {
+      const r = await downloadTelegramFile(token, f, telegramFilesDir());
+      if (r.ok && r.path) paths.push(r.path); else failed++;
+    }
+  }
+
+  const text = d.text || '(attachment without a caption)';
+  const firstLine = text.split('\n')[0] ?? text;
+  const title = tgCore.truncate(firstLine, 80);
+  const attachments = paths.length > 0 ? `\n\nAttachments (local files):\n${paths.map((p) => `- ${p}`).join('\n')}` : '';
+  try {
+    hive.addTask({
+      id: taskId,
+      title,
+      description: text + attachments,
+      status: 'todo',
+      dependsOn: [],
+      priority: 1,
+      createdAt: new Date().toISOString(),
+      telegram: { chat_id: d.chatId, message_id: d.messageId }
+    });
+  } catch (e) {
+    console.error('[telegram] could not create task card:', e instanceof Error ? e.message : e);
+    await telegramSendToOwner(S.hiveOff, d.messageId);
+    return;
+  }
+
+  const protocol = tgCore.buildRequestProtocol({
+    nodeCommand: hive.nodeCommand(), helperPath: telegramReplyScriptPath(), messageId: d.messageId, taskId
+  });
+  const followUp = followUpOf ? `\n\n(This is a follow-up to card ${followUpOf}; read it first.)` : '';
+  try {
+    hive.send({
+      to: 'god',
+      act: 'request',
+      subject: `[telegram] ${title}`,
+      body: `${protocol}\n${text}${attachments}${followUp}`,
+      requires_reply: false
+    }, 'telegram');
+  } catch (e) {
+    console.error('[telegram] could not route to god:', e instanceof Error ? e.message : e);
+  }
+
+  const ids = await telegramSendToOwner(followUpOf ? S.acceptedFollowUp(followUpOf) : S.accepted(taskId), d.messageId);
+  rememberTelegramMessages(ids, { kind: 'task', taskId });
+  if (failed > 0) await telegramSendToOwner(S.filesFailed(failed), d.messageId);
+}
+
+/** The owner replied to a forwarded question: same two steps as the ASK ME tab —
+ *  record the answer on the card, then tell god so the card gets unblocked. */
+async function answerTelegramAsk(taskId: string, q: string, answer: string, messageId: number, lang: string): Promise<void> {
+  const S = tgCore.strings(lang);
+  const task = hiveTaskList().find((t) => t.id === taskId);
+  const humanQA = task ? tgCore.applyAnswer(task, q, answer, new Date().toISOString()) : null;
+  if (!task || !humanQA || !hive.patchTask(task.id, { humanQA })) {
+    await telegramSendToOwner(S.answerStale, messageId);
+    return;
+  }
+  try {
+    hive.send({
+      to: 'god',
+      act: 'inform',
+      subject: `HUMAN ANSWER on task "${task.title}"`,
+      body: [
+        `The human answered the open question on task ${task.id} ("${task.title}") from Telegram:`,
+        `Q: ${q}`,
+        `A: ${answer}`,
+        'The answer is also recorded in the card\'s humanQA. Act on it, unblock the card, and continue the work.'
+      ].join('\n')
+    }, 'human');
+  } catch (e) {
+    console.error('[telegram] could not tell god about the answer:', e instanceof Error ? e.message : e);
+  }
+  await telegramSendToOwner(S.answerSaved(tgCore.escapeHtml(tgCore.truncate(task.title, 120))), messageId);
+}
+
+/** One pass over the kanban: forward new open questions, and the summary of
+ *  Telegram-origin cards that reached 'done'. Never throws into the timer. */
+async function pollTelegramOutbound(): Promise<void> {
+  if (telegramWatching) return;
+  const s = telegramSettings();
+  if (!s.botToken || s.ownerChatId === undefined || !hive.enabled()) return;
+  const lang = s.lang ?? 'ru';
+  telegramWatching = true;
+  try {
+    const tasks = hiveTaskList();
+    const runtime = telegramRuntime();
+
+    const asksNotified = new Set(runtime.asksNotified ?? []);
+    for (const ask of tgCore.openAsks(tasks)) {
+      const key = tgCore.askKey(ask);
+      if (asksNotified.has(key)) continue;
+      const ids = await telegramSendToOwner(tgCore.formatAsk(ask, lang));
+      if (ids.length === 0) continue; // transient failure → retry next tick
+      asksNotified.add(key);
+      rememberTelegramMessages(ids, { kind: 'ask', taskId: ask.taskId, q: ask.q });
+      writeTelegramRuntime({ asksNotified: cappedIds(asksNotified) });
+    }
+
+    // First pass seeds the baseline and announces nothing, so only transitions
+    // seen live this session are reported (same contract as the Slack notifier).
+    if (telegramDoneBaseline === null) {
+      telegramDoneBaseline = new Set(tasks.filter((t) => t.status === 'done').map((t) => t.id));
+      return;
+    }
+    const doneNotified = new Set(runtime.doneNotified ?? []);
+    for (const t of tasks) {
+      if (t.status !== 'done' || !t.telegram || telegramDoneBaseline.has(t.id) || doneNotified.has(t.id)) continue;
+      const answeredDirectly = telegramDirectlyReplied.has(t.telegram.message_id);
+      const hasBody = !!(t.result ?? t.description ?? '').trim();
+      if (!answeredDirectly && hasBody) {
+        const ids = await telegramSendToOwner(tgCore.formatDone(t, lang), t.telegram.message_id);
+        if (ids.length === 0) continue; // transient failure → retry next tick
+        rememberTelegramMessages(ids, { kind: 'task', taskId: t.id });
+      }
+      doneNotified.add(t.id);
+      writeTelegramRuntime({ doneNotified: cappedIds(doneNotified) });
+    }
+  } catch (e) {
+    console.error('[telegram] outbound pass failed:', e instanceof Error ? e.message : e);
+  } finally {
+    telegramWatching = false;
+  }
+}
+
+/** Loopback endpoint for `md-telegram-reply.cjs`; writes `{ port, token }` for it. */
+async function startTelegramReplyServer(): Promise<void> {
+  telegramReplyServer?.stop();
+  const token = randomBytes(24).toString('hex');
+  telegramReplyServer = new TelegramReplyServer({
+    token,
+    getBotToken: () => telegramSettings().botToken,
+    getOwnerChatId: () => telegramSettings().ownerChatId,
+    onReplied: (replyTo) => { if (replyTo !== undefined) telegramDirectlyReplied.add(replyTo); }
+  });
+  const r = await telegramReplyServer.start();
+  if (!r.ok || r.port === undefined) {
+    console.error('[telegram] reply endpoint failed to start:', r.error);
+    telegramReplyServer = null;
+    return;
+  }
+  try { writeFileSync(telegramReplyConfigPath(), JSON.stringify({ port: r.port, token }), { mode: 0o600 }); }
+  catch (e) { console.error('[telegram] could not write reply config:', e instanceof Error ? e.message : e); }
+}
+
+/** Start (or restart) polling with the saved token. Persists `enabled` on success. */
+async function startTelegram(): Promise<TelegramStatus> {
+  const s = telegramSettings();
+  if (!s.botToken) { telegramLastError = 'no bot token'; notifyTelegramState(); return telegramStatus(); }
+  stopTelegram();
+  telegramBot = new TelegramBot({
+    getToken: () => telegramSettings().botToken,
+    getOwnerId: () => telegramSettings().ownerId,
+    getPairingCode: () => telegramPairingCode(),
+    onDecision: handleTelegramDecision,
+    initialOffset: telegramRuntime().offset,
+    onOffset: (offset) => writeTelegramRuntime({ offset }),
+    onState: (st) => { telegramLastError = st.error; notifyTelegramState(); }
+  });
+  const r = await telegramBot.start();
+  if (!r.ok) {
+    telegramBot = null;
+    telegramLastError = r.error;
+    notifyTelegramState();
+    return telegramStatus();
+  }
+  telegramLastError = undefined;
+  writeTelegramSettings({ enabled: true, botUsername: r.botUsername });
+  await startTelegramReplyServer();
+  telegramDoneBaseline = null;
+  if (!telegramWatchTimer) telegramWatchTimer = setInterval(() => { void pollTelegramOutbound(); }, 5000);
+  notifyTelegramState();
+  return telegramStatus();
+}
+
+/** Stop polling and the reply endpoint. Lifecycle-safe; does NOT clear `enabled`
+ *  (only the user's Stop does, in the IPC handler — same rule as Slack). */
+function stopTelegram(): void {
+  try { telegramBot?.stop(); } catch (e) { console.error('[telegram] stop failed:', e); }
+  telegramBot = null;
+  try { telegramReplyServer?.stop(); } catch (e) { console.error('[telegram] reply stop failed:', e); }
+  telegramReplyServer = null;
+  if (telegramWatchTimer) { clearInterval(telegramWatchTimer); telegramWatchTimer = null; }
+  telegramDoneBaseline = null;
+  try { if (existsSync(telegramReplyConfigPath())) unlinkSync(telegramReplyConfigPath()); } catch { /* noop */ }
+}
+
 // ─── Generic inbound webhook + status API (multi-endpoint) ───────────────────
 /** The running generic-webhook server, or null when disabled/stopped. A PUBLIC
  *  (tunnel-forwarded) surface — secret-gated, unlike the loopback /reply. ONE
@@ -3285,6 +3744,7 @@ ipcMain.handle('config:changeHome', async (_evt, payload: unknown) => {
   try { hive.stopRouter(); } catch (e) { console.error('[changeHome] stopRouter:', e); }
   try { hookServer.stop(); } catch (e) { console.error('[changeHome] hookServer.stop:', e); }
   try { stopSlackServer(); } catch (e) { console.error('[changeHome] slack.stop:', e); }
+  try { stopTelegram(); } catch (e) { console.error('[changeHome] telegram.stop:', e); }
   try { stopWebhookServer(); } catch (e) { console.error('[changeHome] webhook.stop:', e); }
   try { memory.stop(); } catch (e) { console.error('[changeHome] memory.stop:', e); }
   try { reflector.stop(); } catch (e) { console.error('[changeHome] reflector.stop:', e); }
@@ -3309,6 +3769,8 @@ ipcMain.handle('config:changeHome', async (_evt, payload: unknown) => {
       bootstrapHiveServices();
       const cfg = readConfig();
       if (cfg.slackEnabled && cfg.slackSigningSecret) void startSlackServer();
+      const tg = telegramSettings();
+      if (tg.enabled && tg.botToken) void startTelegram();
       reconcileWebhookServer();
       return { ok: false, error: `Could not copy data: ${e instanceof Error ? e.message : String(e)}` };
     }
@@ -3786,6 +4248,7 @@ function teardownAndQuit(): void {
   try { hookServer.stop(); } catch (e) { console.error('[quit] hookServer.stop:', e); }
   try { telemetry.stop(); } catch (e) { console.error('[quit] telemetry.stop:', e); }
   try { stopSlackServer(); } catch (e) { console.error('[quit] slack.stop:', e); }
+  try { stopTelegram(); } catch (e) { console.error('[quit] telegram.stop:', e); }
   try { stopWebhookServer(); } catch (e) { console.error('[quit] webhook.stop:', e); }
   try { memory.stop(); } catch (e) { console.error('[quit] memory.stop:', e); }
   try { reflector.stop(); } catch (e) { console.error('[quit] reflector.stop:', e); }
@@ -3847,6 +4310,12 @@ ipcMain.handle('app:resetAll', () => {
   try { hookServer.stop(); } catch (e) { console.error('[reset] hookServer.stop:', e); }
   try { telemetry.stop(); } catch (e) { console.error('[reset] telemetry.stop:', e); }
   try { stopSlackServer(); } catch (e) { console.error('[reset] slack.stop:', e); }
+  try { stopTelegram(); } catch (e) { console.error('[reset] telegram.stop:', e); }
+  // Telegram keeps its token and pairing outside the config file; a reset forgets
+  // them too, or the bot would come back paired after "back to first-run".
+  for (const f of [telegramSettingsPath(), telegramRuntimePath()]) {
+    try { if (existsSync(f)) unlinkSync(f); } catch (e) { console.error('[reset] rm', f, e); }
+  }
   try { memory.stop(); } catch (e) { console.error('[reset] memory.stop:', e); }
   try { reflector.stop(); } catch (e) { console.error('[reset] reflector.stop:', e); }
   try { persist.close(); } catch (e) { console.error('[reset] persist.close:', e); }
@@ -4158,6 +4627,53 @@ ipcMain.handle('slack:setConfig', (_evt, patch: unknown) => {
   const cfg = readConfig();
   if (!cfg.slackEnabled || !cfg.slackSigningSecret) stopSlackServer();
   return { ok: true };
+});
+
+// ─── IPC: Telegram integration ──────────────────────────────────────────────
+// The bot token goes IN through telegram:setToken and never comes back out:
+// telegram:status reports only `hasToken`.
+ipcMain.handle('telegram:status', () => telegramStatus());
+ipcMain.handle('telegram:setToken', async (_evt, token: unknown) => {
+  if (typeof token !== 'string') return telegramStatus();
+  const trimmed = token.trim();
+  const wasRunning = telegramBot?.isRunning === true;
+  // A different bot means different chats: forget the old pairing and username.
+  writeTelegramSettings({
+    botToken: trimmed || undefined, botUsername: undefined,
+    ownerId: undefined, ownerChatId: undefined, ownerName: undefined
+  });
+  writeTelegramRuntime({ offset: undefined, ledger: undefined });
+  telegramLedgerCache = null;
+  telegramLastError = undefined;
+  stopTelegram();
+  if (wasRunning && trimmed) return startTelegram();
+  notifyTelegramState();
+  return telegramStatus();
+});
+ipcMain.handle('telegram:start', () => startTelegram());
+/** Stop is a user decision and must survive a restart, so it clears `enabled`
+ *  before tearing down (lifecycle teardowns call stopTelegram() directly). */
+ipcMain.handle('telegram:stop', () => {
+  writeTelegramSettings({ enabled: false });
+  stopTelegram();
+  telegramLastError = undefined;
+  notifyTelegramState();
+  return telegramStatus();
+});
+ipcMain.handle('telegram:newPairingCode', () => {
+  writeTelegramSettings({ pairingCode: tgCore.newPairingCode(), pairingIssuedAt: Date.now() });
+  notifyTelegramState();
+  return telegramStatus();
+});
+ipcMain.handle('telegram:unpair', () => {
+  writeTelegramSettings({ ownerId: undefined, ownerChatId: undefined, ownerName: undefined });
+  notifyTelegramState();
+  return telegramStatus();
+});
+ipcMain.handle('telegram:setLanguage', (_evt, lang: unknown) => {
+  if (lang === 'ru' || lang === 'en') writeTelegramSettings({ lang });
+  notifyTelegramState();
+  return telegramStatus();
 });
 
 // ─── IPC: Triggers — context (auto-compact / auto-clear) ────────────────────
@@ -5405,6 +5921,8 @@ app.whenReady().then(() => {
   // server is running; the FILE only exists while it is, so the helper degrades
   // to "endpoint not running" cleanly. NO secret is in the env — only the path.
   process.env.MD_SLACK_REPLY_CONFIG = slackReplyConfigPath();
+  // Same for the Telegram helper: only the discovery-file path, never the token.
+  process.env.MD_TELEGRAM_REPLY_CONFIG = telegramReplyConfigPath();
   // Open the durable store first — createWindow() reads the saved window bounds.
   // Guarded: a DB failure (e.g. a bad native build) must degrade to defaults,
   // never block app startup.
@@ -5437,6 +5955,15 @@ app.whenReady().then(() => {
     void startSlackServer().then((r) => {
       if (!r.ok) console.error('[slack] auto-start failed:', r.error);
       else console.log('[slack] webhook listening', r.url ? `(tunnel: ${r.url})` : '(no tunnel)');
+    });
+  }
+  // Auto-start Telegram polling when the user left it on. Offline is fine: the
+  // status carries the error and Settings → Start retries.
+  const tgCfg = telegramSettings();
+  if (tgCfg.enabled && tgCfg.botToken) {
+    void startTelegram().then((st) => {
+      if (st.error) console.error('[telegram] auto-start failed:', st.error);
+      else console.log('[telegram] polling as', st.botUsername ? `@${st.botUsername}` : '(unknown bot)');
     });
   }
   // Auto-start the generic webhook only for endpoints the user has explicitly

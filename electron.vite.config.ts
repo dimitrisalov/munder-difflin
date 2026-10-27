@@ -30,7 +30,9 @@ function copyMainSidecars() {
     // Knowledge Graph core: required by knowledge.ts at runtime (pure-JS, no
     // native deps), so it must be emitted next to the main bundle like the
     // Slack sidecar above.
-    ['src/main/kg-core.cjs', 'out/main/kg-core.cjs']
+    ['src/main/kg-core.cjs', 'out/main/kg-core.cjs'],
+    // Telegram decision + formatting core, required by index.ts and telegram.ts.
+    ['src/main/telegram-core.cjs', 'out/main/telegram-core.cjs']
   ];
   return {
     name: 'copy-main-cjs-sidecars',

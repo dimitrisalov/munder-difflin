@@ -136,6 +136,9 @@ export interface HiveTask {
    *  done-summary reply is posted back into. Consumed OUTBOUND only; populating
    *  it is the inbound/kanban side's job and does not affect routing. */
   slack?: { channel: string; thread_ts: string };
+  /** Set when this task originated from the owner's Telegram — the message the
+   *  done-summary replies to. Consumed OUTBOUND only, like `slack`. */
+  telegram?: { chat_id: number; message_id: number };
   /** Set when this task originated from a generic webhook POST. Stores the SHA-256
    *  of the capability token (never the raw token — that's returned to the caller
    *  once and never persisted), so a GET status lookup can match by hashing the

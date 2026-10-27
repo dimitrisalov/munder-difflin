@@ -167,6 +167,8 @@ export interface HiveTask {
   result?: string;
   /** Origin thread for a Slack-sourced task (drives the done-summary reply). */
   slack?: { channel: string; thread_ts: string };
+  /** Origin message for a Telegram-sourced task (drives the done-summary reply). */
+  telegram?: { chat_id: number; message_id: number };
   /** SHA-256 of the capability token for a generic-webhook-sourced task (drives
    *  the GET status lookup; the raw token is never persisted). */
   webhook?: { tokenHash: string };
