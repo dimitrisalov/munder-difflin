@@ -197,10 +197,46 @@ test('the request protocol embeds the exact reply command and the card id', () =
   assert.match(p, /"node" "C:\\md\\md-telegram-reply\.cjs" --reply-to 42 --text/);
   assert.match(p, /card telegram-abc/);
   assert.match(p, /humanQA/);
+  assert.match(p, /in the language the owner wrote in/);
 });
 
 test('unknown language falls back to Russian', () => {
-  assert.equal(core.strings('de'), core.strings('ru'));
+  assert.equal(core.strings('de').help, core.strings('ru').help);
+  assert.equal(core.strings('de').accepted('t'), core.strings('ru').accepted('t'));
+});
+
+test('the texts name the boss the owner knows, escaped, defaulting to the app default', () => {
+  assert.equal(core.strings('en', 'Theo').accepted('OFF-7'), 'Got it, passed to Theo. Task OFF-7.');
+  assert.equal(core.strings('ru', 'Theo').accepted('OFF-7'), 'Принято, передал Theo. Задача OFF-7.');
+  assert.match(core.strings('en', 'Theo').help, /Theo gets it/);
+  assert.match(core.strings('ru', 'Theo').answerSaved('x'), /передан Theo\.$/);
+  assert.match(core.strings('en', 'Theo').acceptedFollowUp('t'), /passed to Theo as a follow-up/);
+  for (const lang of ['ru', 'en']) {
+    const S = core.strings(lang, 'Theo');
+    const all = Object.values(S).map((v) => (typeof v === 'function' ? v('x') : typeof v === 'string' ? v : '')).join('\n');
+    assert.doesNotMatch(all, /Michael/, lang);
+  }
+  assert.match(core.strings('en').accepted('t'), new RegExp(core.DEFAULT_BOSS));
+  assert.match(core.strings('en', '  ').accepted('t'), new RegExp(core.DEFAULT_BOSS));
+  assert.match(core.strings('en', 'A<b>').accepted('t'), /A&lt;b&gt;/);
+});
+
+test('detectLang: the language the owner wrote in', () => {
+  assert.equal(core.detectLang('please make a pitch deck for Kettle'), 'en');
+  assert.equal(core.detectLang('сделай питч-дек для Kettle'), 'ru');
+  // Russian with English terms in it is still Russian.
+  assert.equal(core.detectLang('сделай deck для Kettle про pricing strategy'), 'ru');
+  // English quoting a little Russian is still English.
+  assert.equal(core.detectLang("also responded me 'принято, передал' in russian though i texted in english"), 'en');
+  // Links, commands, mentions and code do not count.
+  assert.equal(core.detectLang('глянь https://example.com/some/long/english/path'), 'ru');
+  assert.equal(core.detectLang('/status'), undefined);
+  assert.equal(core.detectLang('посмотри `npm run build --verbose`'), 'ru');
+  // Too little to tell.
+  assert.equal(core.detectLang('ok'), undefined);
+  assert.equal(core.detectLang('👍 42'), undefined);
+  assert.equal(core.detectLang(''), undefined);
+  assert.equal(core.detectLang(undefined), undefined);
 });
 
 test('fmtTokens: compact millions and thousands per language', () => {

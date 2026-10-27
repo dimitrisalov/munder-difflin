@@ -364,6 +364,7 @@
       "unpair": "unpair",
       "telegramPairHint": "Open this link on your phone, or send the command below to your bot. The code works for 15 minutes.",
       "telegramLanguage": "Bot language",
+      "telegramLanguageHint": "Switches to the language you write to the bot in.",
       "telegramVoice": "Voice notes",
       "telegramVoice_auto": "auto",
       "telegramVoice_local": "local Whisper",

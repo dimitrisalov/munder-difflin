@@ -1953,7 +1953,8 @@ const tgCore = require('./telegram-core.cjs') as {
   askKey: (ask: TelegramAsk) => string;
   applyAnswer: (task: HiveTask, q: string, answer: string, nowIso: string) => HiveTask['humanQA'] | null;
   MessageLedger: new (maxSize?: number, entries?: unknown) => TelegramLedger;
-  strings: (lang: string) => TelegramStrings;
+  strings: (lang: string, boss?: string) => TelegramStrings;
+  detectLang: (text: string) => 'ru' | 'en' | undefined;
   formatDone: (task: HiveTask, lang: string) => string;
   formatAsk: (ask: TelegramAsk, lang: string) => string;
   formatStatus: (registry: unknown, tasks: unknown, lang: string) => string;
@@ -2064,6 +2065,30 @@ function writeTelegramRuntime(patch: Partial<TelegramRuntime>): void {
   catch (e) { console.error('[telegram] could not save runtime state:', e instanceof Error ? e.message : e); }
 }
 
+/** God's name as the owner knows it, e.g. "Theo" — the one the bot hands requests to. */
+function telegramBossName(): string {
+  if (!hive.enabled()) return resolveGodName(undefined);
+  const reg = hive.registry();
+  return resolveGodName(reg.agents[reg.godId ?? 'god']?.name);
+}
+
+function telegramStrings(lang: string): TelegramStrings {
+  return tgCore.strings(lang, telegramBossName());
+}
+
+/** The bot speaks the language the owner last wrote in: this reply, and the
+ *  questions, results and alerts sent later. Saved as the bot's language, so
+ *  Settings shows it too. */
+function followOwnerLanguage(text: string | undefined): 'ru' | 'en' {
+  const s = telegramSettings();
+  const lang = text ? tgCore.detectLang(text) : undefined;
+  if (lang && lang !== s.lang) {
+    writeTelegramSettings({ lang });
+    notifyTelegramState();
+  }
+  return lang ?? s.lang ?? 'ru';
+}
+
 /** The current pairing code, or undefined once it has expired. */
 function telegramPairingCode(): string | undefined {
   const s = telegramSettings();
@@ -2168,7 +2193,7 @@ async function sendTelegramAsk(ask: TelegramAsk, lang: string): Promise<number[]
 
 /** A button press on a forwarded question: pick an option, or dismiss it. */
 async function handleTelegramCallback(d: Extract<TelegramDecision, { kind: 'callback' }>, lang: string): Promise<void> {
-  const S = tgCore.strings(lang);
+  const S = telegramStrings(lang);
   const token = telegramSettings().botToken;
   if (!token) return;
   const entry = telegramRuntime().askButtons?.[d.key];
@@ -2204,7 +2229,7 @@ async function transcribeTelegramVoice(
   d: Extract<TelegramDecision, { kind: 'message' }>,
   lang: string
 ): Promise<string | null> {
-  const S = tgCore.strings(lang);
+  const S = telegramStrings(lang);
   const s = telegramSettings();
   if (!d.voice || !s.botToken) return null;
   const groqKey = readConfig().groqApiKey;
@@ -2220,14 +2245,14 @@ async function transcribeTelegramVoice(
   }
   const r = await transcribeVoice({ settings: s.voice, groqKey, audio, mime: d.voice.mime, filename: d.voice.name });
   if (!r.ok || !r.text) { await telegramSendToOwner(S.voiceFailed(tgCore.escapeHtml(r.error ?? 'empty transcript')), d.messageId); return null; }
-  await telegramSendToOwner(S.heard(tgCore.escapeHtml(tgCore.truncate(r.text, 600))), d.messageId);
+  await telegramSendToOwner(telegramStrings(followOwnerLanguage(r.text)).heard(tgCore.escapeHtml(tgCore.truncate(r.text, 600))), d.messageId);
   return r.text;
 }
 
 /** One decision from the polling loop → office work or a reply. */
 async function handleTelegramDecision(d: Exclude<TelegramDecision, { kind: 'ignore' }>): Promise<void> {
-  const lang = telegramSettings().lang ?? 'ru';
-  const S = tgCore.strings(lang);
+  let lang = d.kind === 'message' ? followOwnerLanguage(d.text) : telegramSettings().lang ?? 'ru';
+  const S = telegramStrings(lang);
   integrationEvents.push('telegram', d.kind === 'pair' ? 'paired with the owner'
     : d.kind === 'command' ? `command /${d.cmd}`
     : d.kind === 'callback' ? 'button pressed under a question'
@@ -2262,7 +2287,10 @@ async function handleTelegramDecision(d: Exclude<TelegramDecision, { kind: 'igno
   if (d.voice) {
     const heard = await transcribeTelegramVoice(d, lang);
     if (heard === null && !d.text && d.files.length === 0) return;
-    if (heard) d = { ...d, text: d.text ? `${d.text}\n\n${heard}` : heard };
+    if (heard) {
+      d = { ...d, text: d.text ? `${d.text}\n\n${heard}` : heard };
+      lang = followOwnerLanguage(d.text);
+    }
   }
 
   // A reply to one of our messages: an answer to a question, or a follow-up.
@@ -2279,7 +2307,7 @@ async function handleTelegramDecision(d: Exclude<TelegramDecision, { kind: 'igno
 }
 
 async function handleTelegramCommand(cmd: string, messageId: number, lang: string): Promise<void> {
-  const S = tgCore.strings(lang);
+  const S = telegramStrings(lang);
   switch (cmd) {
     case 'start':
     case 'help':
@@ -2323,7 +2351,7 @@ async function dispatchTelegramWork(
   followUpOf: string | undefined,
   lang: string
 ): Promise<void> {
-  const S = tgCore.strings(lang);
+  const S = telegramStrings(lang);
   const token = telegramSettings().botToken;
   const taskId = `telegram-${randomBytes(6).toString('hex')}`;
 
@@ -2406,7 +2434,7 @@ function answerAskOnCard(taskId: string, q: string, answer: string, via: string)
 
 /** The owner replied to a forwarded question in Telegram. */
 async function answerTelegramAsk(taskId: string, q: string, answer: string, messageId: number, lang: string): Promise<void> {
-  const S = tgCore.strings(lang);
+  const S = telegramStrings(lang);
   const r = answerAskOnCard(taskId, q, answer, 'Telegram');
   if (!r.ok) { await telegramSendToOwner(S.answerStale, messageId); return; }
   await telegramSendToOwner(S.answerSaved(tgCore.escapeHtml(tgCore.truncate(r.title ?? taskId, 120))), messageId);

@@ -236,6 +236,7 @@ export function TelegramSettings({ godName }: { godName: string }) {
           </PixelButton>
         ))}
       </div>
+      <span style={hintStyle}>{t('settings.connections.telegramLanguageHint')}</span>
     </div>
   );
 }

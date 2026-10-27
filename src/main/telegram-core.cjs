@@ -343,15 +343,20 @@ class MessageLedger {
 
 // ─── User-facing texts ──────────────────────────────────────────────────────
 
+/** Who takes the owner's requests when the caller does not say (the app's
+ *  default boss, see shared/godIdentity.ts). */
+const DEFAULT_BOSS = 'Michael';
+
+/** Per language: the texts, given the boss's name already HTML-escaped. */
 const STRINGS = {
-  ru: {
+  ru: (boss) => ({
     paired: (name) => `Готово, ${name}: бот привязан к тебе. Пиши задачи для офиса прямо сюда.\n\n/help — что я умею.`,
     panelLink: (url) => `📱 Панель офиса (работает только при включённом Tailscale):\n${url}\n\nДобавь её на экран «Домой». Ссылку никому не пересылай.`,
     panelOff: 'Мобильная панель выключена. Включается в Settings → Connections → Mobile panel.',
     help: [
       'Я связь с офисом.',
       '',
-      '• Просто напиши задачу — она уйдёт Michael, он раздаст её агентам.',
+      `• Просто напиши задачу — её получит ${boss} и раздаст агентам.`,
       '• Можно приложить файл или фото с подписью.',
       '• Когда офису нужен твой ответ, я пришлю вопрос. Ответь на него реплаем.',
       '• Когда задача готова, пришлю результат.',
@@ -362,9 +367,9 @@ const STRINGS = {
       '/limits — расход токенов за 5 часов, сутки, неделю и месяц',
       '/panel — ссылка на мобильную панель офиса'
     ].join('\n'),
-    accepted: (taskId) => `Принято, передал Michael. Задача ${taskId}.`,
-    acceptedFollowUp: (taskId) => `Принято, передал Michael как продолжение задачи ${taskId}.`,
-    answerSaved: (title) => `Ответ записан на карточку «${title}» и передан Michael.`,
+    accepted: (taskId) => `Принято, передал ${boss}. Задача ${taskId}.`,
+    acceptedFollowUp: (taskId) => `Принято, передал ${boss} как продолжение задачи ${taskId}.`,
+    answerSaved: (title) => `Ответ записан на карточку «${title}» и передан ${boss}.`,
     answerStale: 'Этот вопрос уже закрыт или изменился. /asks покажет актуальные.',
     ask: (title, q) => `❓ <b>Вопрос от офиса</b>\nЗадача: ${escapeHtml(title)}\n\n${mdToTelegramHtml(q)}\n\n<i>Ответь реплаем на это сообщение.</i>`,
     done: (title, body) => `✅ <b>${escapeHtml(title)}</b>${body ? `\n\n${mdToTelegramHtml(body)}` : ''}`,
@@ -397,15 +402,15 @@ const STRINGS = {
     heard: (t) => `🎙 Распознал: «${t}»`,
     voiceOff: 'Голосовые пока не распознаются: в настройках Telegram не выбран способ распознавания.',
     voiceFailed: (e) => `Не получилось распознать голосовое: ${e}`
-  },
-  en: {
+  }),
+  en: (boss) => ({
     paired: (name) => `Done, ${name}: this bot is now paired to you. Send tasks for the office right here.\n\n/help — what I can do.`,
     panelLink: (url) => `📱 Office panel (works only with Tailscale on):\n${url}\n\nAdd it to your Home Screen. Do not forward this link.`,
     panelOff: 'The mobile panel is off. Turn it on in Settings → Connections → Mobile panel.',
     help: [
       'I am your line to the office.',
       '',
-      '• Just write a task — it goes to Michael, who hands it to the agents.',
+      `• Just write a task — ${boss} gets it and hands it to the agents.`,
       '• You can attach a file or a photo with a caption.',
       '• When the office needs your answer, I send the question. Reply to it.',
       '• When a task is done, I send the result.',
@@ -416,9 +421,9 @@ const STRINGS = {
       '/limits — token use over 5 hours, a day, a week and a month',
       '/panel — link to the mobile office panel'
     ].join('\n'),
-    accepted: (taskId) => `Got it, passed to Michael. Task ${taskId}.`,
-    acceptedFollowUp: (taskId) => `Got it, passed to Michael as a follow-up to task ${taskId}.`,
-    answerSaved: (title) => `Answer saved on “${title}” and passed to Michael.`,
+    accepted: (taskId) => `Got it, passed to ${boss}. Task ${taskId}.`,
+    acceptedFollowUp: (taskId) => `Got it, passed to ${boss} as a follow-up to task ${taskId}.`,
+    answerSaved: (title) => `Answer saved on “${title}” and passed to ${boss}.`,
     answerStale: 'That question is already closed or has changed. /asks shows the current ones.',
     ask: (title, q) => `❓ <b>The office has a question</b>\nTask: ${escapeHtml(title)}\n\n${mdToTelegramHtml(q)}\n\n<i>Reply to this message to answer.</i>`,
     done: (title, body) => `✅ <b>${escapeHtml(title)}</b>${body ? `\n\n${mdToTelegramHtml(body)}` : ''}`,
@@ -451,11 +456,32 @@ const STRINGS = {
     heard: (t) => `🎙 Heard: “${t}”`,
     voiceOff: 'Voice notes are not transcribed yet: no transcription engine is chosen in the Telegram settings.',
     voiceFailed: (e) => `Could not transcribe the voice note: ${e}`
-  }
+  })
 };
 
-function strings(lang) {
-  return STRINGS[lang] || STRINGS.ru;
+/** The bot's texts in `lang` (Russian when unknown), naming `boss` as the one
+ *  who takes requests. */
+function strings(lang, boss) {
+  return (STRINGS[lang] || STRINGS.ru)(escapeHtml((boss && String(boss).trim()) || DEFAULT_BOSS));
+}
+
+/**
+ * The language the owner wrote in, from the letters alone: 'ru' or 'en', or
+ * undefined when there is too little to tell (a link, a number, an emoji).
+ * Links, commands, mentions and code are skipped so an English URL in a
+ * Russian message does not flip it. Russian is often written with English
+ * terms in it ("\u0441\u0434\u0435\u043B\u0430\u0439 deck \u0434\u043B\u044F Kettle") while English is rarely written with
+ * Cyrillic, so a quarter of Cyrillic letters already means Russian.
+ */
+function detectLang(text) {
+  const plain = String(text || '')
+    .replace(/```[\s\S]*?```|`[^`]*`/g, ' ')
+    .replace(/\b(?:https?:\/\/|www\.)\S+/gi, ' ')
+    .replace(/(^|\s)[/@#]\S+/g, ' ');
+  const cyr = (plain.match(/[\u0400-\u04FF]/g) || []).length;
+  const lat = (plain.match(/[A-Za-z]/g) || []).length;
+  if (cyr + lat < 3) return undefined;
+  return cyr / (cyr + lat) >= 0.25 ? 'ru' : 'en';
 }
 
 /** Done summary for a Telegram-origin card, as Telegram HTML. */
@@ -582,7 +608,7 @@ function buildRequestProtocol(opts) {
     '1. ROUTE FAST — check the live roster (registry.json, fleet.json) and hand this to the single best-fitting existing agent; do small things yourself.',
     `2. DELEGATE WITH THE REPLY HANDLE — tell that agent to post its real result back to the owner itself when done, using exactly: ${reply}`,
     '   For long text, write it to a file and pass --text-file <path> instead of --text. To send a result file (image, PDF, document) add --file <absolute path>; --text then becomes its caption.',
-    '3. PHONE-SIZED REPLIES — short headline + the actual outcome/specifics. Plain text or light markdown (**bold**, `code`, [label](url)). Never a bare "done".',
+    '3. PHONE-SIZED REPLIES — short headline + the actual outcome/specifics, in the language the owner wrote in. Plain text or light markdown (**bold**, `code`, [label](url)). Never a bare "done".',
     `4. QUESTIONS — if a decision is genuinely needed, set card ${opts.taskId} to blocked and append {q, askedAt} to its humanQA. The harness forwards the ask to the owner\'s Telegram and writes the answer back into the card. Put choices on their own lines as "1. …", "2. …": the owner gets one tap buttons for them.`,
     `5. CLOSE THE CARD — when finished set card ${opts.taskId} status to 'done' and fill its 'result' (a short summary). The harness sends that summary to Telegram if no direct reply was posted.`,
     '6. Ask the owner before spending money, publishing anything, deleting files or installing software.',
@@ -618,7 +644,9 @@ module.exports = {
   askShortKey,
   askKeyboard,
   MessageLedger,
+  DEFAULT_BOSS,
   strings,
+  detectLang,
   formatDone,
   formatAsk,
   formatStatus,

@@ -364,6 +364,7 @@
       "unpair": "отвязать",
       "telegramPairHint": "Откройте эту ссылку на телефоне или отправьте боту команду ниже. Код действует 15 минут.",
       "telegramLanguage": "Язык бота",
+      "telegramLanguageHint": "Переключается сам на язык, на котором ты пишешь боту.",
       "telegramVoice": "Голосовые",
       "telegramVoice_auto": "авто",
       "telegramVoice_local": "локальный Whisper",

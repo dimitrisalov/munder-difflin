@@ -364,6 +364,7 @@
       "unpair": "解除配对",
       "telegramPairHint": "在手机上打开此链接，或把下面的命令发给你的机器人。代码在 15 分钟内有效。",
       "telegramLanguage": "机器人语言",
+      "telegramLanguageHint": "会自动切换为你给机器人发消息时使用的语言。",
       "telegramVoice": "语音消息",
       "telegramVoice_auto": "自动",
       "telegramVoice_local": "本地 Whisper",
