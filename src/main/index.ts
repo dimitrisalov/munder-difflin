@@ -640,6 +640,11 @@ ptyManager.setExitHandler((id, exitCode, info) => {
         tail: info?.tail,
         command: info?.command
       });
+      // Same moment, same reason (whose process it was is gone after teardown):
+      // a crashed agent gets brought back, within limits (wave 5).
+      if (!liveWorkers.has(id) && !pendingInstallRelaunch.has(id)) {
+        watchAgentExit(id, dyingAgent, exitCode, info?.signal, info?.tail);
+      }
     }
   } catch (e) { console.error('[pty] recordAgentExit failed:', e); }
 
@@ -664,6 +669,52 @@ ptyManager.setExitHandler((id, exitCode, info) => {
   }
   teardownPty(id);
 });
+
+// ─── Agent watchdog (wave 5) ────────────────────────────────────────────────
+// A crashed agent is revived by the renderer (the same --resume respawn as the
+// after-sleep auto-revive) after a short, growing delay; past maxPerHour it is
+// left down and the owner hears about it in Telegram. Decisions: watchdog-core.cjs.
+interface WatchdogCore {
+  isCrash: (exitCode: number | undefined, signal: number | undefined) => boolean;
+  decide: (history: number[], now: number, cfg: unknown) =>
+    { revive: true; delayMs: number; attempt: number } | { revive: false; reason: string; recent: number };
+  prune: (history: number[], now: number) => number[];
+  crashExcerpt: (tail: string | undefined, maxChars?: number) => string;
+  formatGiveUp: (o: { name?: string; agentId: string; exitCode?: number; signal?: number; recent: number; excerpt: string }, lang: string) => string;
+}
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const watchdogCore = require('./watchdog-core.cjs') as WatchdogCore;
+/** agentId → when its revives were scheduled (last hour only). */
+const watchdogHistory = new Map<string, number[]>();
+
+function watchAgentExit(ptyId: string, agentId: string, exitCode: number | undefined, signal: number | undefined, tail: string | undefined): void {
+  if (!watchdogCore.isCrash(exitCode, signal)) return;
+  const now = Date.now();
+  const history = watchdogCore.prune(watchdogHistory.get(agentId) ?? [], now);
+  const d = watchdogCore.decide(history, now, readConfig().watchdog);
+  let name = agentId;
+  try { name = hive.registry().agents[agentId]?.name ?? agentId; } catch { /* no hive */ }
+  const how = signal ? `signal ${signal}` : `code ${exitCode}`;
+  if (!d.revive) {
+    watchdogHistory.set(agentId, history);
+    if (d.reason === 'off') { console.warn(`[watchdog] ${name} crashed (${how}); watchdog is off`); return; }
+    console.error(`[watchdog] ${name} crashed (${how}) ${d.recent} times this hour; leaving it down`);
+    const lang = telegramSettings().lang ?? 'ru';
+    const html = watchdogCore.formatGiveUp({ name, agentId, exitCode, signal, recent: d.recent, excerpt: watchdogCore.crashExcerpt(tail) }, lang);
+    void telegramSendToOwner(html).catch(() => { /* best-effort */ });
+    breakerToast('Agent keeps crashing', `${name} crashed ${d.recent} times in the last hour and was left stopped.`);
+    return;
+  }
+  watchdogHistory.set(agentId, [...history, now]);
+  console.warn(`[watchdog] ${name} crashed (${how}); reviving in ${Math.round(d.delayMs / 1000)}s (attempt ${d.attempt})`);
+  const t = setTimeout(() => {
+    // Someone may have restarted it by hand meanwhile: never respawn a live PTY.
+    if (ptyManager.list().some((p) => p.id === ptyId)) return;
+    try { liveWebContents()?.send('agent:revive', { ptyId, agentId, attempt: d.attempt }); }
+    catch { /* window gone: nothing to revive into */ }
+  }, d.delayMs);
+  t.unref?.();
+}
 
 /** Keep the system from suspending the harness while agents are running.
  *  Windows Modern Standby suspends desktop apps (and their child `claude`

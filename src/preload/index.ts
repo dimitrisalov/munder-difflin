@@ -372,6 +372,7 @@ export interface HarnessConfig {
   workSwitchClear?: { enabled: boolean; minSessionMinutes: number; minContextTokens: number };
   /** Temps any agent may start (mirrors main/temps.ts). */
   temps?: { enabled: boolean; maxPerAgent: number; maxTotal: number; tokenCap: number };
+  watchdog?: { enabled?: boolean; maxPerHour?: number };
   /** Folder of hire templates (mirrors main config). */
   hireTemplatesDir?: string;
   /** Ticket key prefix for kanban cards (mirrors main config). */
@@ -1135,6 +1136,13 @@ const api = {
     const listener = (_e: IpcRendererEvent, payload: PowerResumeEvent) => cb(payload);
     ipcRenderer.on('power:resume', listener);
     return () => ipcRenderer.removeListener('power:resume', listener);
+  },
+  /** The agent watchdog asks for a crashed agent's terminal to be revived
+   *  (wave 5); the renderer respawns it with --resume like an after-sleep revive. */
+  onAgentRevive: (cb: (e: { ptyId: string; agentId: string; attempt: number }) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, payload: { ptyId: string; agentId: string; attempt: number }) => cb(payload);
+    ipcRenderer.on('agent:revive', listener);
+    return () => ipcRenderer.removeListener('agent:revive', listener);
   },
 
   // ─── Multi-window floors ───────────────────────────────────────────────────

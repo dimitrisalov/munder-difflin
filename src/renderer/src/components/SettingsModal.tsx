@@ -26,6 +26,7 @@ import { PeriodLimitsSettings } from './PeriodLimitsSettings';
 import { WorkSwitchSettings } from './WorkSwitchSettings';
 import { TempsSettings } from './TempsSettings';
 import { BackupsSettings } from './BackupsSettings';
+import { WatchdogSettings } from './WatchdogSettings';
 import { IntegrationsStatus } from './IntegrationsStatus';
 import { PanelSettings } from './PanelSettings';
 import { REALTIME_MODEL } from '@shared/realtimePricing';
@@ -1382,6 +1383,11 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
 
                       {/* Temps any agent may start for itself (main/temps-core.cjs). */}
                       <TempsSettings />
+
+                      <div style={{ height: 1, background: 'var(--cth-ink-300)' }} />
+
+                      {/* Crashed agents come back with --resume (main/watchdog-core.cjs). */}
+                      <WatchdogSettings />
                     </>
                   )}
 

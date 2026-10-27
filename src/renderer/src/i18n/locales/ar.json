@@ -309,7 +309,10 @@
       "tempsPerAgent": "لكل وكيل",
       "tempsTotal": "في المكتب",
       "tempsTokenCap": "رموز لكل مساعد",
-      "tempsNoCap": "بلا حد"
+      "tempsNoCap": "بلا حد",
+      "watchdogTitle": "حارس الوكلاء",
+      "watchdogDesc": "الوكيل الذي يتعطل برنامجه يعود من تلقاء نفسه ويكمل محادثته. بعد تجاوز الحد أدناه يبقى متوقفًا وتصلك رسالة على Telegram.",
+      "watchdogMax": "عمليات إعادة التشغيل في الساعة"
     },
     "memory": {
       "semanticMemory": "الذاكرة الدلالية",

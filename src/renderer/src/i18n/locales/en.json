@@ -309,7 +309,10 @@
       "tempsPerAgent": "Per agent",
       "tempsTotal": "In the office",
       "tempsTokenCap": "Tokens per temp",
-      "tempsNoCap": "no cap"
+      "tempsNoCap": "no cap",
+      "watchdogTitle": "Agent watchdog",
+      "watchdogDesc": "An agent whose CLI crashes comes back on its own and continues its conversation. Past the limit below it stays down and you get a Telegram message.",
+      "watchdogMax": "restarts per hour"
     },
     "memory": {
       "semanticMemory": "Semantic memory",

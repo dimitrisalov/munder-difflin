@@ -309,7 +309,10 @@
       "tempsPerAgent": "每个智能体",
       "tempsTotal": "整个办公室",
       "tempsTokenCap": "每个助手的 token",
-      "tempsNoCap": "不限"
+      "tempsNoCap": "不限",
+      "watchdogTitle": "代理看门狗",
+      "watchdogDesc": "CLI 崩溃的代理会自动恢复并继续之前的对话。超过下面的上限后，它会保持停止状态，并通过 Telegram 通知你。",
+      "watchdogMax": "每小时重启次数"
     },
     "memory": {
       "semanticMemory": "语义记忆",

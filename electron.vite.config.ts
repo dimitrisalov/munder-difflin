@@ -46,7 +46,9 @@ function copyMainSidecars() {
     // Office log file decisions, required by officeLog.ts.
     ['src/main/officeLog-core.cjs', 'out/main/officeLog-core.cjs'],
     // Office backup decisions, required by backups.ts.
-    ['src/main/backups-core.cjs', 'out/main/backups-core.cjs']
+    ['src/main/backups-core.cjs', 'out/main/backups-core.cjs'],
+    // Agent watchdog decisions, required by index.ts.
+    ['src/main/watchdog-core.cjs', 'out/main/watchdog-core.cjs']
   ];
   return {
     name: 'copy-main-cjs-sidecars',

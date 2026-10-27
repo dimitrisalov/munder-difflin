@@ -1205,13 +1205,15 @@ export function useHive(config: HarnessConfig | null): void {
   //    "Restart & Continue". This reuses the same resume-spawn flow as that button
   //    (CommandCenterPanel.restartWithModel) and restoreTeam's worktree handling.
   //    Pure addition: an empty `dead[]` is a no-op; healthy PTYs are never touched.
+  //    The agent watchdog (wave 5) uses the same respawn for an agent whose CLI
+  //    crashed: main decides whether and when (agent:revive), this does it.
   useEffect(() => {
     if (!config?.onboardingComplete) return;
     // Skip an id we revived (or are mid-reviving) within this window — coalesces
     // a resume + unlock that arrive back-to-back (main also coalesces on its side).
     const REVIVE_DEBOUNCE_MS = 8000;
 
-    const revive = async (deadId: string): Promise<void> => {
+    const revive = async (deadId: string, why: 'sleep' | 'crash'): Promise<void> => {
       const now = Date.now();
       if (now - (reviving.current[deadId] ?? 0) < REVIVE_DEBOUNCE_MS) return;
       reviving.current[deadId] = now; // claim BEFORE any await so re-entry can't double-spawn
@@ -1260,7 +1262,7 @@ export function useHive(config: HarnessConfig | null): void {
         });
         if (res.ok) {
           reviving.current[deadId] = Date.now(); // re-stamp so the debounce covers the spawn
-          useStore.getState().updateAgent(a.id, { status: 'idle', action: 'revived after sleep' });
+          useStore.getState().updateAgent(a.id, { status: 'idle', action: why === 'crash' ? 'revived after a crash' : 'revived after sleep' });
         } else {
           delete reviving.current[deadId]; // let a later power:resume retry it
           console.error('[autorevive] respawn failed for', a.id, res.error);
@@ -1271,10 +1273,14 @@ export function useHive(config: HarnessConfig | null): void {
       }
     };
 
-    return window.cth.onPowerResume?.((e) => {
+    const offResume = window.cth.onPowerResume?.((e) => {
       const dead = Array.isArray(e?.dead) ? e.dead : [];
       if (!dead.length) return; // healthy wake — nothing wedged, no-op
-      for (const id of dead) void revive(id);
+      for (const id of dead) void revive(id, 'sleep');
     });
+    const offCrash = window.cth.onAgentRevive?.((e) => {
+      if (e?.ptyId) void revive(e.ptyId, 'crash');
+    });
+    return () => { offResume?.(); offCrash?.(); };
   }, [config?.onboardingComplete]);
 }

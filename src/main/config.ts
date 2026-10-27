@@ -267,6 +267,10 @@ export interface HarnessConfig {
    *  agents/<id>/temps/ folder, within these limits. Off by default; read
    *  through temps-core.cjs's sanitizeTempsConfig, never raw. */
   temps?: TempsConfig;
+  /** Agent watchdog (wave 5): a crashed agent is revived with --resume, at most
+   *  maxPerHour times an hour (default 3). On unless enabled is false; read
+   *  through watchdog-core.cjs's sanitize, never raw. */
+  watchdog?: { enabled?: boolean; maxPerHour?: number };
   /** Folder of hire templates (`*.hire.json`) offered in Add Agent and used as
    *  the default place to export an agent to (wave 3). Unset = none. */
   hireTemplatesDir?: string;
