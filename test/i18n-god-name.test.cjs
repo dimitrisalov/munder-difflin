@@ -17,7 +17,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const locale = (l) => JSON.parse(read(`src/renderer/src/i18n/locales/${l}.json`));
-const LOCALES = ['en', 'zh-CN'];
+const LOCALES = ['en', 'zh-CN', 'ru'];
 
 function flatten(obj, pre = '', out = {}) {
   for (const [k, v] of Object.entries(obj)) {
@@ -113,4 +113,15 @@ test('something actually calls setGodName, or the wiring is dead', () => {
   assert.match(hook, /setGodName\(/);
   assert.match(hook, /isGod/);
   assert.match(read('src/renderer/src/App.tsx'), /useGodNameSync\(\)/);
+});
+
+test('en and ru carry exactly the same keys and placeholders', () => {
+  const en = flatten(locale('en'));
+  const ru = flatten(locale('ru'));
+  assert.deepEqual(Object.keys(ru).sort(), Object.keys(en).sort());
+  const vars = (v) => [...new Set((text(v).match(/\{\{(\w+)\}\}/g) || []))].sort();
+  const drift = Object.keys(en)
+    .filter((k) => JSON.stringify(vars(en[k])) !== JSON.stringify(vars(ru[k])))
+    .map((k) => `${k}: en=${vars(en[k])} ru=${vars(ru[k])}`);
+  assert.deepEqual(drift, [], `placeholder drift:\n  ${drift.join('\n  ')}`);
 });

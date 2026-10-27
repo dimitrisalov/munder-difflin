@@ -18,10 +18,14 @@ const FONT_DIR = 'src/renderer/src/assets/fonts';
 const FILES = [
   'press-start-2p-latin-400.woff2',
   'inter-latin-var.woff2',
-  'jetbrains-mono-latin-var.woff2'
+  'jetbrains-mono-latin-var.woff2',
+  // Cyrillic subsets for the Russian interface, loaded by unicode-range only.
+  'press-start-2p-cyrillic-400.woff2',
+  'inter-cyrillic-var.woff2',
+  'jetbrains-mono-cyrillic-var.woff2'
 ];
 
-test('the three faces are real woff2 files inside the repo', () => {
+test('the bundled faces are real woff2 files inside the repo', () => {
   for (const f of FILES) {
     const buf = fs.readFileSync(path.join(root, FONT_DIR, f));
     // 'wOF2' — a truncated or HTML-error-page download would not carry it.
@@ -47,7 +51,7 @@ test('the OFL license and attribution ship with the fonts', () => {
 
 test('@font-face points at the bundled files, not a URL', () => {
   const css = read('src/renderer/src/design/fonts.css');
-  assert.equal((css.match(/@font-face/g) || []).length, 3);
+  assert.equal((css.match(/@font-face/g) || []).length, FILES.length);
   for (const f of FILES) assert.ok(css.includes(f), `fonts.css does not reference ${f}`);
   assert.doesNotMatch(css.replace(/\/\*[\s\S]*?\*\//g, ''), /https?:/);
 });

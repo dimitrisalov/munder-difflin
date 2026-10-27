@@ -1,8 +1,8 @@
 Bundled fonts and their licenses
 ================================
 
-Munder Difflin ships three font files inside the application bundle, in
-src/renderer/src/assets/fonts/. They are NOT ours. All three are licensed under
+Munder Difflin ships six font files inside the application bundle, in
+src/renderer/src/assets/fonts/. They are NOT ours. All of them are licensed under
 the SIL Open Font License, Version 1.1, whose full text follows the attributions
 below. The OFL requires this notice to travel with every copy of the software.
 
@@ -20,6 +20,11 @@ below. The OFL requires this notice to travel with every copy of the software.
     JetBrains Mono (latin subset, variable, weights 400 to 700)
     Copyright 2020 The JetBrains Mono Project Authors
     https://github.com/JetBrains/JetBrainsMono
+
+  press-start-2p-cyrillic-400.woff2, inter-cyrillic-var.woff2,
+  jetbrains-mono-cyrillic-var.woff2
+    The cyrillic subsets of the same three families, same authors and
+    licence, loaded only for Cyrillic text (the Russian interface).
 
 No CJK or Arabic face is bundled: a full CJK face is 8 to 10 MB, and every
 platform we ship on already carries one. The design tokens name those system

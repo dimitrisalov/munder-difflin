@@ -4513,10 +4513,11 @@ ipcMain.handle('capabilities:runStep', async (evt, id: unknown, index: unknown) 
   if (!entry) return { ok: false, error: 'not in the verified catalog' };
   const step = capCore.oneClickSteps(entry)[index];
   if (!step) return { ok: false, error: 'the app does not run this step; follow the manual steps' };
-  const [bin, ...args] = step.argv;
-  if (!ptyManager.isCommandAvailable(bin)) return { ok: false, error: `${bin} is not installed on this machine` };
+  // stepAllowed() has already pinned the executable to `claude`.
+  const [cli, ...args] = step.argv;
+  if (!ptyManager.isCommandAvailable(cli)) return { ok: false, error: `${cli} is not installed on this machine` };
   const ptyId = `cap-install-${++capInstallSeq}`;
-  const res = ptyManager.spawn({ id: ptyId, cwd: homedir(), command: bin, args, cols: 100, rows: 18 }, evt.sender);
+  const res = ptyManager.spawn({ id: ptyId, cwd: homedir(), command: cli, args, cols: 100, rows: 18 }, evt.sender);
   integrationEvents.push('capabilities', `${entry.name}: ${step.argv.join(' ')}`, res.ok ? 'info' : 'error');
   return res.ok ? { ok: true, ptyId, argv: step.argv } : { ok: false, error: res.error ?? 'could not start the terminal' };
 });
