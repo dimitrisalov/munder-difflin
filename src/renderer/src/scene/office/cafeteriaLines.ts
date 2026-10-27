@@ -77,6 +77,7 @@ const BY_CHARACTER: Partial<Record<OfficeCharacterName, readonly string[]>> = {
   creed:    ['which one of you is the new guy?', 'I’ve eaten worse out of that fridge', 'mung beans. under my desk.'],
   meredith: ['is it 5 o’clock yet?', 'someone spike the coffee?'],
   theo:     ['mrrp.', 'this mug is mine now', 'meeting? I was napping.', 'whose tuna is this?', 'I knock things off desks. for strategy.'],
+  mia:      ['sssso… is that Comic Sans?', 'more whitespace. always.', 'kerning is a lifestyle', 'cold brew. I’m cold-blooded.', 'no, I won’t make the logo bigger'],
 };
 
 /** A solo break-room line. Character flavour ~60% of the time, else the line

@@ -9,6 +9,7 @@
 
 import type { OfficeCharacterName } from './cast';
 import { catPortraitBuf, catSceneBufs } from './catArt';
+import { snakePortraitBuf, snakeSceneBufs } from './snakeArt';
 
 export const PORTRAIT_W = 18;
 export const PORTRAIT_H = 28;
@@ -491,8 +492,9 @@ function drawHeavyFace(buf: Buf, skin: string): void {
   set(buf, 7, 17, s.sh); set(buf, 10, 17, s.sh); // crease shadow between chin + roll
 }
 
-/** Every human in the cast; Theo the cat is drawn by catArt.ts instead. */
-type HumanName = Exclude<OfficeCharacterName, 'theo'>;
+/** Every human in the cast; Theo the cat (catArt.ts) and Mia the snake
+ *  (snakeArt.ts) are drawn by their own modules. */
+type HumanName = Exclude<OfficeCharacterName, 'theo' | 'mia'>;
 const RECIPES: Record<HumanName, Recipe> = {
   michael:  { skin: 'light', hairc: [58, 42, 28],   hair: 'styleShort',  hairargs: { part: 'L' }, cloth: 'suit', c1: [58, 63, 74], tie: [170, 58, 58], brow: 'flat', mouth: 'smile' },
   jim:      { skin: 'light', hairc: [92, 60, 34],   hair: 'styleFloppy', cloth: 'dressshirt', c1: [172, 196, 224], tie: [120, 130, 150], brow: 'flat', mouth: 'smile' },
@@ -556,7 +558,9 @@ const sceneCache = new Map<OfficeCharacterName, SceneFrames>();
 function getBuf(name: OfficeCharacterName): Buf {
   let buf = bufCache.get(name);
   if (!buf) {
-    buf = name === 'theo' ? catPortraitBuf() : compose(RECIPES[name as HumanName] ?? RECIPES.jim);
+    buf = name === 'theo' ? catPortraitBuf()
+      : name === 'mia' ? snakePortraitBuf()
+      : compose(RECIPES[name as HumanName] ?? RECIPES.jim);
     bufCache.set(name, buf);
   }
   return buf;
@@ -567,8 +571,8 @@ export interface SceneFrames { front: Buf[]; back: Buf[]; }
 /** Walk-phase frames (stand, step-L, step-R) for the in-scene sprite, front + back. */
 export function sceneFrameBufs(name: OfficeCharacterName): SceneFrames {
   let frames = sceneCache.get(name);
-  if (!frames && name === 'theo') {
-    frames = catSceneBufs();
+  if (!frames && (name === 'theo' || name === 'mia')) {
+    frames = name === 'theo' ? catSceneBufs() : snakeSceneBufs();
     sceneCache.set(name, frames);
   }
   if (!frames) {

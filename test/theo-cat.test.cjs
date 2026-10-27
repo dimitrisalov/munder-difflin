@@ -53,7 +53,7 @@ test('whiskers are translucent so the outline does not thicken them', () => {
 
 test('Theo is in the cast and the boss keeps his look across launches', () => {
   const castSrc = fs.readFileSync(path.join(__dirname, '../src/renderer/src/scene/office/cast.ts'), 'utf8');
-  assert.match(castSrc, /\| 'theo';/);
+  assert.match(castSrc, /\| 'theo'/);
   assert.match(castSrc, /name: 'theo',\s+displayName: 'Theo'/);
   const hive = fs.readFileSync(path.join(__dirname, '../src/renderer/src/hooks/useHive.ts'), 'utf8');
   assert.match(hive, /character: CAST_BY_NAME\[config\.godCharacter/);
