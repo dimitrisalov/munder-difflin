@@ -13,6 +13,7 @@ import { hexToNumber, DEFAULT_CHARACTER } from './cast';
 import { pickSoloLine, pickExchange, type BreakSpot } from './cafeteriaLines';
 import { freeSeatInZone } from './seatZones';
 import { daylightAt, hoursOf, type Daylight } from './daylight';
+import { screenModeFor } from './screenMode';
 import {
   drawProp, idleAnimated, FLAT_PROPS, GRIND_SECONDS,
   drawBongSession, drawGamingSession, drawConsoleSession, drawNap,
@@ -1115,9 +1116,11 @@ export function OfficeFloor() {
               rt.character.startWandering();
             }
           }
-          // The monitor lights up whenever its owner is in the chair.
+          // The monitor lights up whenever its owner is in the chair, and
+          // shows what they're up to (screenMode.ts).
           if (rt.screen) {
             rt.screen.setOn(rt.character.isSittingAtDesk());
+            rt.screen.setMode(screenModeFor(agentById(id)?.status));
             rt.screen.update(dt);
           }
         }
