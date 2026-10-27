@@ -86,6 +86,19 @@ const initialGodPrompt = (name: string): string => [
 // boot typed /remote-control: "Unknown command: /remote-control<next prompt>").
 const writeChains = new Map<string, Promise<void>>();
 const readyPids = new Map<string, number>();
+/** When each agent last reported a submitted prompt (its UserPromptSubmit hook):
+ *  how submitToPty knows its Enter actually went through. */
+const promptSubmittedAt = new Map<string, number>();
+
+/** Did `agentId` report a submitted prompt after `since`, within `waitMs`? */
+async function promptArrived(agentId: string, since: number, waitMs: number): Promise<boolean> {
+  const until = Date.now() + waitMs;
+  while (Date.now() < until) {
+    if ((promptSubmittedAt.get(agentId) ?? 0) >= since) return true;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return (promptSubmittedAt.get(agentId) ?? 0) >= since;
+}
 
 async function waitForTerminalReady(
   ptyId: string,
@@ -124,7 +137,13 @@ async function waitForTerminalReady(
  * TUI treats it as ONE paste: embedded newlines land as literal newlines in the
  * input box. Without them, every "\n" in a multi-line message acted as Enter —
  * the message submitted line-by-line in fragments (the agent saw only the last
- * chunk). The closing Enter, sent a tick later, submits the whole block. (#24) */
+ * chunk). The closing Enter, sent a tick later, submits the whole block. (#24)
+ *
+ * On Windows a long paste can still be landing when that Enter arrives, and the
+ * Enter is swallowed: the text sits in the input box and the next message is
+ * glued onto it (seen with the boss's orientation prompt). For a multi-line
+ * paste into a Claude agent we therefore wait for its UserPromptSubmit hook and,
+ * if none comes, press Enter once more — harmless on an empty input. */
 function submitToPty(
   ptyId: string,
   text: string,
@@ -147,8 +166,18 @@ function submitToPty(
     const wrote = await window.cth.writePty(ptyId, payload);
     if (!wrote?.ok) throw new Error(wrote?.error ?? `pty write failed: ${ptyId}`);
     await new Promise((r) => setTimeout(r, 140));
+    const sentAt = Date.now();
     const submitted = await window.cth.writePty(ptyId, '\r');
     if (!submitted?.ok) throw new Error(submitted?.error ?? `pty write failed: ${ptyId}`);
+    const agentId = provider === 'claude' && payload !== text
+      ? useStore.getState().agents.find((a) => a.ptyId === ptyId)?.id
+      : undefined;
+    if (agentId && !(await promptArrived(agentId, sentAt, 2500))) {
+      await window.cth.writePty(ptyId, '\r');
+      if (!(await promptArrived(agentId, sentAt, 2500))) {
+        console.warn(`[hive] ${agentId}: a message was typed but may not have been submitted (no prompt-submit hook after two Enters)`);
+      }
+    }
     await new Promise((r) => setTimeout(r, settleMs));
   });
   writeChains.set(ptyId, next);
@@ -499,6 +528,7 @@ export function useHive(config: HarnessConfig | null): void {
         if (!breakerArmed) updateAgent(e.agentId, { status: 'working', currentStation: m.station, carrying: m.carry, action: `using ${e.tool}` });
         useStore.getState().bumpToolCount(e.agentId); // usage proxy for the command center
       } else if (e.event === 'PostToolUse' || e.event === 'UserPromptSubmit') {
+        if (e.event === 'UserPromptSubmit') promptSubmittedAt.set(e.agentId, Date.now());
         // A turn is in progress (prompt submitted / tool just finished) — keep
         // it working so it doesn't flicker idle between tool calls.
         if (!breakerArmed) updateAgent(e.agentId, { status: 'working' });
