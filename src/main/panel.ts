@@ -21,6 +21,7 @@ interface PanelCore {
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 export const panelCore = require('./panel-core.cjs') as PanelCore & {
   pickTailscaleIPv4: (interfaces: unknown) => string | null;
+  snapshotGate: (opts: { request: () => Promise<Buffer | null>; now?: () => number; maxAgeMs?: number }) => { get: () => Promise<Buffer | null> };
   newAccessToken: () => string;
   buildState: (input: { registry: unknown; tasks: unknown; limits: unknown; now: number }) => unknown;
 };
@@ -41,6 +42,8 @@ export interface PanelServerOptions {
   getState: () => unknown;
   onTask: (text: string) => Promise<{ ok: boolean; taskId?: string; error?: string }>;
   onAnswer: (taskId: string, q: string, answer: string) => Promise<{ ok: boolean; error?: string }>;
+  /** A JPEG of the office floor, or null when there is no floor on screen. */
+  getFloor?: () => Promise<Buffer | null>;
 }
 
 export class PanelServer {
@@ -66,7 +69,7 @@ export class PanelServer {
 
   get running(): boolean { return this.server !== null; }
 
-  private send(res: ServerResponse, status: number, body: string, type: string, extra: Record<string, string> = {}): void {
+  private send(res: ServerResponse, status: number, body: string | Buffer, type: string, extra: Record<string, string> = {}): void {
     res.writeHead(status, { ...SECURITY_HEADERS, 'content-type': type, ...extra });
     res.end(body);
   }
@@ -93,6 +96,12 @@ export class PanelServer {
     if (req.method === 'GET' && path === '/') { this.send(res, 200, panelCore.PAGE, 'text/html; charset=utf-8'); return; }
     if (req.method === 'GET' && path === '/api/state') {
       try { this.json(res, 200, this.opts.getState()); } catch (e) { this.json(res, 500, { error: e instanceof Error ? e.message : String(e) }); }
+      return;
+    }
+    if (req.method === 'GET' && path === '/api/floor.jpg') {
+      const jpeg = this.opts.getFloor ? await this.opts.getFloor().catch(() => null) : null;
+      if (jpeg) this.send(res, 200, jpeg, 'image/jpeg');
+      else this.json(res, 503, { error: 'the office floor is not on screen' });
       return;
     }
     if (req.method === 'POST' && (path === '/api/task' || path === '/api/answer')) {

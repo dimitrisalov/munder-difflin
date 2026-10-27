@@ -126,6 +126,40 @@ function buildState({ registry, tasks, limits, now }) {
   return { agents, asks, open, done, limits: limits || null, updatedAt: now };
 }
 
+/** A JPEG starts with the SOI marker FF D8 FF. */
+function isJpeg(buf) {
+  return !!buf && buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+}
+
+/**
+ * The office floor as a picture for the page. Phones poll every few seconds,
+ * maybe several at once: they share one capture in flight, and a capture
+ * younger than `maxAgeMs` is served again instead of asking the window for
+ * another. Anything that is not a JPEG (no floor on screen, a failed capture)
+ * is null and is not kept, so the next poll tries again.
+ * @param {{ request: () => Promise<Buffer|Uint8Array|null>, now?: () => number, maxAgeMs?: number }} opts
+ */
+function snapshotGate({ request, now = Date.now, maxAgeMs = 1500 }) {
+  let last = null;
+  let at = -Infinity;
+  let inflight = null;
+  return {
+    get() {
+      if (last && now() - at < maxAgeMs) return Promise.resolve(last);
+      if (inflight) return inflight;
+      inflight = Promise.resolve()
+        .then(request)
+        .then((buf) => (isJpeg(buf) ? buf : null), () => null)
+        .then((buf) => {
+          inflight = null;
+          if (buf) { last = buf; at = now(); }
+          return buf;
+        });
+      return inflight;
+    }
+  };
+}
+
 /** Validate a new-task or answer body from the page. */
 function readTaskBody(body) {
   const text = body && typeof body.text === 'string' ? body.text.trim() : '';
@@ -159,9 +193,11 @@ button{font:inherit;border:0;border-radius:8px;padding:8px 12px;background:var(-
 button.alt{background:transparent;color:var(--accent);border:1px solid var(--accent)}
 .q{white-space:pre-wrap}.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:4px}.bar>i{display:block;height:100%;background:var(--accent)}
 .over>i{background:var(--warn)}#err{color:var(--warn)}details summary{cursor:pointer}
+.floor{padding:6px}.floor img{display:block;width:100%;height:auto;min-height:120px;border-radius:8px;background:var(--line);image-rendering:pixelated}.floor .muted{margin:6px 4px 0}
 </style></head><body>
 <div class="row"><h1>Офис</h1><span class="muted" id="upd"></span></div>
 <div id="err"></div>
+<div class="card floor"><a href="/api/floor.jpg" target="_blank"><img id="floor" alt="Офис"></a><div class="muted" id="floornote">Загружаю офис…</div></div>
 <div class="card"><textarea id="task" rows="3" placeholder="Новая задача для офиса…"></textarea><button id="send">Отправить</button></div>
 <h2>Ждут тебя</h2><div id="asks"></div>
 <h2>Агенты</h2><div id="agents"></div>
@@ -193,7 +229,12 @@ document.addEventListener('click',async(e)=>{const b=e.target.closest('button');
  if(b.id==='send'){const text=$('#task').value.trim();if(!text)return;b.disabled=true;try{await api('/api/task',{text});$('#task').value='';await load();}catch(x){alert(x.message);}b.disabled=false;return;}
  if(b.dataset.a!==undefined){const a=window.__asks[+b.dataset.a];const answer=b.dataset.v||$('#ans'+b.dataset.a).value.trim();if(!a||!answer)return;b.disabled=true;
   try{await api('/api/answer',{taskId:a.taskId,q:a.q,answer});await load();}catch(x){alert(x.message);}b.disabled=false;}});
-load();setInterval(load,15000);
+let floorBusy=false;
+function floor(){if(document.hidden||floorBusy)return;floorBusy=true;const im=new Image();im.alt='Офис';
+ im.onload=()=>{im.id='floor';$('#floor').replaceWith(im);$('#floornote').textContent='Офис сейчас · '+new Date().toLocaleTimeString()+' · нажмите, чтобы увеличить';floorBusy=false;};
+ im.onerror=()=>{$('#floornote').textContent='Картинки нет: окно офиса закрыто или ещё загружается.';floorBusy=false;};
+ im.src='/api/floor.jpg?t='+Date.now();}
+load();setInterval(load,15000);floor();setInterval(floor,3000);document.addEventListener('visibilitychange',()=>{if(!document.hidden){load();floor();}});
 </script></body></html>`;
 
 module.exports = {
@@ -210,6 +251,8 @@ module.exports = {
   buildState,
   readTaskBody,
   readAnswerBody,
+  isJpeg,
+  snapshotGate,
   PAGE,
   COOKIE
 };

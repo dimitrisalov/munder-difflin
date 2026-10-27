@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Application, Container, Graphics, Ticker, Texture } from 'pixi.js';
+import { Application, Container, Graphics, Rectangle, Ticker, Texture } from 'pixi.js';
 // PixiJS uses new Function() internally, blocked by Electron CSP — this patches it.
 import 'pixi.js/unsafe-eval';
 import { useStore, type Agent } from '@/store/store';
@@ -1820,6 +1820,23 @@ export function OfficeFloor() {
         }
       };
       app.ticker.add(onTick);
+      // The mobile panel's picture of the office (main: floor:snapshot): the
+      // whole map whatever the camera shows, at twice its pixel size, as a JPEG.
+      (app as any).__offSnapshot = window.cth.onFloorSnapshotRequest((id) => {
+        void (async () => {
+          let jpeg: Uint8Array | null = null;
+          try {
+            const c = app.renderer.extract.canvas({
+              target: mapRenderer.getContainer(), frame: new Rectangle(0, 0, mapPxW, mapPxH), resolution: 2,
+            }) as HTMLCanvasElement;
+            const blob = await new Promise<Blob | null>((r) => c.toBlob(r, 'image/jpeg', 0.85));
+            if (blob) jpeg = new Uint8Array(await blob.arrayBuffer());
+          } catch (e) {
+            console.warn('[OfficeFloor] floor snapshot failed:', e);
+          }
+          window.cth.sendFloorSnapshot(id, jpeg);
+        })();
+      });
       // init() is async: the floor may already be behind a fullscreen terminal by
       // the time we get here, and app.init() starts the ticker itself.
       if (pausedRef.current) app.ticker.stop();
@@ -1880,6 +1897,7 @@ export function OfficeFloor() {
         (a as any).__resize?.disconnect?.();
         try { (a as any).__unsub?.(); } catch { /* noop */ }
         try { (a as any).__offMessage?.(); } catch { /* noop */ }
+        try { (a as any).__offSnapshot?.(); } catch { /* noop */ }
         try { clearInterval((a as any).__taskBoardPoll); } catch { /* noop */ }
         safeDestroy(a);
       }

@@ -1150,6 +1150,16 @@ const api = {
     ipcRenderer.on('agent:revive', listener);
     return () => ipcRenderer.removeListener('agent:revive', listener);
   },
+  /** The mobile panel wants a picture of the office floor; answer with
+   *  sendFloorSnapshot(id, jpeg), or null when there is none. */
+  onFloorSnapshotRequest: (cb: (id: number) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, id: number) => cb(id);
+    ipcRenderer.on('floor:snapshot-request', listener);
+    return () => ipcRenderer.removeListener('floor:snapshot-request', listener);
+  },
+  sendFloorSnapshot: (id: number, jpeg: Uint8Array | null): void => {
+    ipcRenderer.send('floor:snapshot', id, jpeg);
+  },
 
   // ─── Multi-window floors ───────────────────────────────────────────────────
   /** Open a new floor (independent office window). No-op when the multiWindow

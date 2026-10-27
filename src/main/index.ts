@@ -2596,6 +2596,34 @@ async function dispatchPanelTask(text: string): Promise<{ ok: boolean; taskId?: 
   return { ok: true, taskId };
 }
 
+// ─── The office floor as a picture, for the panel ──────────────────────────
+// The panel asks, the window's OfficeFloor answers with a JPEG of the whole map
+// (floor:snapshot). No floor on screen (still loading, window gone): null after
+// a short wait, and the page says so. panelCore.snapshotGate shares captures
+// between phones polling at once.
+let floorSnapshotSeq = 0;
+const floorSnapshotWaiting = new Map<number, (jpeg: Buffer | null) => void>();
+const FLOOR_SNAPSHOT_MAX_BYTES = 8 * 1024 * 1024;
+ipcMain.on('floor:snapshot', (evt, id: unknown, data: unknown) => {
+  if (evt.sender !== liveWebContents() || typeof id !== 'number') return;
+  const done = floorSnapshotWaiting.get(id);
+  if (!done) return;
+  floorSnapshotWaiting.delete(id);
+  done(data instanceof Uint8Array && data.byteLength <= FLOOR_SNAPSHOT_MAX_BYTES ? Buffer.from(data) : null);
+});
+function requestFloorSnapshot(): Promise<Buffer | null> {
+  const wc = liveWebContents();
+  if (!wc) return Promise.resolve(null);
+  const id = ++floorSnapshotSeq;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { floorSnapshotWaiting.delete(id); resolve(null); }, 4000);
+    floorSnapshotWaiting.set(id, (jpeg) => { clearTimeout(timer); resolve(jpeg); });
+    try { wc.send('floor:snapshot-request', id); }
+    catch { clearTimeout(timer); floorSnapshotWaiting.delete(id); resolve(null); }
+  });
+}
+const floorSnapshots = panelCore.snapshotGate({ request: requestFloorSnapshot });
+
 /** Start (or restart) the panel on the Tailscale address. Persists `enabled`. */
 async function startPanel(): Promise<ReturnType<typeof panelStatus>> {
   stopPanel();
@@ -2625,7 +2653,8 @@ async function startPanel(): Promise<ReturnType<typeof panelStatus>> {
       const r = answerAskOnCard(taskId, q, answer, 'the mobile panel');
       integrationEvents.push('panel', r.ok ? `answer: ${r.title ?? taskId}` : 'answer to a question that is no longer open', r.ok ? 'info' : 'error');
       return r.ok ? { ok: true } : { ok: false, error: 'this question is no longer open' };
-    }
+    },
+    getFloor: () => floorSnapshots.get()
   });
   const r = await server.start();
   if (!r.ok) {

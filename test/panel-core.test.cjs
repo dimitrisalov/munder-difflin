@@ -70,3 +70,44 @@ test('the page script parses as JavaScript and loads nothing external', () => {
   assert.doesNotMatch(p.PAGE, /https?:\/\//);
   assert.doesNotMatch(p.PAGE, /Michael/);
 });
+
+test('floor pictures: only JPEGs pass', () => {
+  assert.equal(p.isJpeg(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1])), true);
+  assert.equal(p.isJpeg(Buffer.from('<html>')), false);
+  assert.equal(p.isJpeg(null), false);
+  assert.equal(p.isJpeg(Buffer.from([0xff, 0xd8])), false);
+});
+
+test('floor pictures: phones polling at once share one capture, a fresh one is reused', async () => {
+  const jpeg = (n) => Buffer.from([0xff, 0xd8, 0xff, n]);
+  let calls = 0; let clock = 1000;
+  const gate = p.snapshotGate({ request: async () => jpeg(++calls), now: () => clock, maxAgeMs: 1500 });
+  const [a, b] = await Promise.all([gate.get(), gate.get()]);
+  assert.equal(calls, 1, 'one capture for two phones');
+  assert.equal(a, b);
+  clock += 1000;
+  assert.equal(await gate.get(), a, 'still fresh: served again');
+  assert.equal(calls, 1);
+  clock += 600;
+  assert.equal((await gate.get())[3], 2, 'stale: a new capture');
+  assert.equal(calls, 2);
+});
+
+test('floor pictures: no floor or a failed capture is null and not kept', async () => {
+  let answer = null; let calls = 0;
+  const gate = p.snapshotGate({ request: async () => { calls++; if (answer === 'throw') throw new Error('gone'); return answer; }, now: () => 0 });
+  assert.equal(await gate.get(), null);
+  answer = Buffer.from('not a jpeg');
+  assert.equal(await gate.get(), null);
+  answer = 'throw';
+  assert.equal(await gate.get(), null);
+  answer = Buffer.from([0xff, 0xd8, 0xff, 9]);
+  assert.equal((await gate.get())[3], 9, 'the next poll tries again');
+  assert.equal(calls, 4);
+});
+
+test('the page shows the floor picture and refreshes it', () => {
+  assert.match(p.PAGE, /<img id="floor"/);
+  assert.match(p.PAGE, /\/api\/floor\.jpg\?t=/);
+  assert.match(p.PAGE, /setInterval\(floor,3000\)/);
+});
