@@ -356,6 +356,10 @@ export interface HarnessConfig {
   officeMap?: 'classic' | 'loft';
   /** Day and night on the office floor by the local clock. Unset = on. */
   dayNight?: boolean;
+  /** Launch picker: open the current config after a 10 s countdown unless
+   *  someone clicks, so an unattended start (autostart, remote restart) reaches
+   *  the agents. Unset = on; false = always wait for a click. */
+  hivePickerAutoOpen?: boolean;
   /** Per-CLI-provider local/self-hosted base URL (Ollama/LM Studio/vLLM, …) for the
    *  OpenCode/Crush/pi/qwen engines; applied at spawn (config-injection or proxy
    *  upstream). API KEYS are NOT stored here — they live write-only in the secret

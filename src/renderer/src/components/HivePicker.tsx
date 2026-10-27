@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { PixelPanel } from './PixelPanel';
 import { PixelButton } from './PixelButton';
 import { Icon } from './Icon';
@@ -14,6 +14,12 @@ export interface HivePickerProps {
 // changeHome triggers — otherwise the user would land back on the picker for the
 // hive they just chose. App.tsx reads + clears it on mount.
 const SKIP_KEY = 'cth.skipHivePickerOnce';
+
+/** An unattended start (autostart after a reboot, a remote restart) must not
+ *  wait for a click: with a current config set, it opens after this countdown.
+ *  Any click or key press on the picker means someone is at the screen — the
+ *  countdown stops and the picker waits as before. */
+const AUTO_OPEN_SECONDS = 10;
 
 function folderName(path: string): string {
   return path.split('/').filter(Boolean).pop() ?? path;
@@ -32,6 +38,20 @@ export function HivePicker({ config, onOpenCurrent }: HivePickerProps) {
   const recents = (config.recentHives ?? []).filter((h) => h && h !== current);
   const [busy, setBusy] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
+  const [countdown, setCountdown] = useState<number | null>(
+    current && config.hivePickerAutoOpen !== false ? AUTO_OPEN_SECONDS : null);
+
+  // The parent passes a fresh callback on every render; keep the latest in a
+  // ref so a re-render never restarts the one-second tick.
+  const openCurrent = useRef(onOpenCurrent);
+  openCurrent.current = onOpenCurrent;
+  useEffect(() => {
+    if (countdown === null || busy) return;
+    if (countdown <= 0) { openCurrent.current(); return; }
+    const t = setTimeout(() => setCountdown((n) => (n === null ? null : n - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [countdown, busy]);
+  const stay = (): void => setCountdown(null);
 
   // Open a hive. Same folder as the current one → just enter it (no relaunch).
   // A different folder → changeHome('fresh') re-points + relaunches the process.
@@ -64,7 +84,7 @@ export function HivePicker({ config, onOpenCurrent }: HivePickerProps) {
   };
 
   return (
-    <div style={{
+    <div onPointerDownCapture={stay} onKeyDownCapture={stay} style={{
       position: 'fixed', inset: 0,
       background: 'var(--cth-cream-200)',
       backgroundImage:
@@ -107,6 +127,11 @@ export function HivePicker({ config, onOpenCurrent }: HivePickerProps) {
                     open
                   </PixelButton>
                 </div>
+                {countdown !== null && (
+                  <div style={{ marginTop: 6, fontSize: 12, color: 'var(--cth-ink-500)' }}>
+                    Opening it in {countdown}s — click anywhere to stay on this screen.
+                  </div>
+                )}
               </div>
             )}
 
