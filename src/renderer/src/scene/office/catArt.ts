@@ -137,7 +137,8 @@ function drawTie(c: Canvas, top: number, bottom: number): void {
 
 /** The portrait's shoulders and chest: fluffy white, the boss's tie. */
 function drawBust(c: Canvas): void {
-  c.row(16, 7, 10, FUR.sh); c.row(17, 7, 10, FUR.sh); c.row(18, 6, 11, FUR.base);
+  // The neck widens a little toward the shoulders, like the floor sprite's.
+  c.row(16, 7, 10, FUR.sh); c.row(17, 6, 11, FUR.sh); c.row(18, 5, 12, FUR.base);
   const rows: Array<[number, number, number]> = [[19, 5, 12], [20, 4, 13], [21, 3, 14], [22, 3, 14], [23, 2, 15], [24, 2, 15], [25, 2, 15], [26, 2, 15], [27, 2, 15]];
   for (const [y, x0, x1] of rows) c.row(y, x0, x1, FUR.base);
   for (let y = 22; y <= 27; y++) { c.set(3, y, FUR.sh); c.set(14, y, FUR.sh); }
