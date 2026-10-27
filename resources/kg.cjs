@@ -9,6 +9,7 @@
  *   node "$KG_CLI" search "<query>" [--limit N] [--json]
  *   node "$KG_CLI" list [--json]
  *   node "$KG_CLI" get <docId>
+ *   node "$KG_CLI" add --title "<title>" [--tags a,b] --file <path>   (or text / stdin)
  *
  * Pure Node (node:fs only via kg-core) — no native modules, so it runs cleanly
  * under a plain `node` outside the Electron app/asar. The main process injects:
@@ -105,6 +106,39 @@ function main() {
       process.stdout.write(`# ${doc.meta.title}  [${doc.meta.modality}]\nsource: ${doc.meta.source}\n\n${doc.text}\n`);
       return;
     }
+    case 'add': {
+      // Agents save what they learned for the whole team: a fact, a source list,
+      // a finished research note. Text comes from --file, else the positionals,
+      // else stdin. The note is attributed to the agent that added it.
+      const fs = require('node:fs');
+      const title = typeof flags.title === 'string' ? flags.title.trim() : '';
+      let text = '';
+      let srcPath = null;
+      if (typeof flags.file === 'string') {
+        srcPath = path.resolve(flags.file);
+        if (!fs.existsSync(srcPath)) fail(`no such file: ${flags.file}`);
+      } else if (positionals.length) {
+        text = positionals.join(' ');
+      } else if (!process.stdin.isTTY) {
+        try { text = fs.readFileSync(0, 'utf8'); } catch { text = ''; }
+      }
+      if (!srcPath && !text.trim()) fail('usage: kg add --title "<title>" [--tags a,b] (--file <path> | "<text>" | <stdin>)');
+      const tags = typeof flags.tags === 'string'
+        ? flags.tags.split(',').map((t) => t.trim()).filter(Boolean)
+        : [];
+      const by = process.env.AGENT_NAME || process.env.AGENT_ID || 'agent';
+      if (!tags.includes(`by:${by}`)) tags.push(`by:${by}`);
+      const r = core.ingest(kgRoot, {
+        srcPath: srcPath || undefined,
+        text: srcPath ? undefined : text,
+        title: title || undefined,
+        tags,
+        source: srcPath ? `${by}: ${path.basename(srcPath)}` : `${by}: note`
+      });
+      process.stdout.write(json ? JSON.stringify(r, null, 2) + '\n'
+        : `Saved to the knowledge base: "${r.meta.title}" (id: ${r.docId}, ${r.chunkCount} chunk(s)).\n`);
+      return;
+    }
     case 'stats': {
       const s = core.stats(kgRoot);
       process.stdout.write(json ? JSON.stringify(s, null, 2) + '\n'
@@ -117,6 +151,8 @@ function main() {
         + '  kg search "<query>" [--limit N] [--json]   ranked passages from the enterprise knowledge base\n'
         + '  kg list [--json]                            all documents (title, modality, id)\n'
         + '  kg get <docId> [--json]                     full extracted text of one document\n'
+        + '  kg add --title "<t>" [--tags a,b] --file <path>   save a note or file for the whole team\n'
+        + '                                              (or the text as an argument, or on stdin)\n'
         + '  kg stats [--json]                           corpus counts\n'
       );
       process.exit(cmd ? 1 : 0);

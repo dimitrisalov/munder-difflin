@@ -30,14 +30,50 @@ const MAX_INDEX_BYTES = 5 * 1024 * 1024; // per-doc text indexed before truncati
 const DEFAULT_SEARCH_LIMIT = 8;
 const SNIPPET_RADIUS = 160; // chars of context on each side of a match
 
-// Tiny English stop-list — enough to stop the most common words from dominating
-// term-frequency scores without pulling in an NLP dependency.
+// Tiny English and Russian stop-lists — enough to stop the most common words
+// from dominating term-frequency scores without pulling in an NLP dependency.
 const STOPWORDS = new Set(
   ('a an and are as at be but by for from has have how in is it its of on or '
    + 'that the their this to was were what when where which who will with your '
    + 'you we our us they them he she his her i me my do does did not can could '
-   + 'would should about into over than then there here so if no yes').split(' ')
+   + 'would should about into over than then there here so if no yes '
+   + 'и в во не что он на я с со как а то все она так его но да ты к у же вы за бы '
+   + 'по только ее мне было вот от меня еще нет о из ему теперь когда даже ну ли если '
+   + 'уже или ни быть был него до вас там потом себя ей может они тут где есть надо '
+   + 'ней для мы тебя их чем была сам без чего раз тоже себе под будет тогда кто этот '
+   + 'того потому этого какой здесь этом один мой тем чтобы нее сейчас были куда всех '
+   + 'можно при об после над больше тот через эти нас про всего них много эту этой '
+   + 'перед том такой им более всегда между это это').split(' ')
 );
+
+// Letters of any script (so Cyrillic notes are searchable, not silently dropped)
+// followed by letters/digits, or a run of digits.
+const WORD_RE = /[\p{L}\p{M}][\p{L}\p{M}\p{N}]*|\p{N}+/gu;
+
+// Russian inflects heavily (агент / агента / агентов / агентам…), so a Cyrillic
+// word is cut to a rough stem by dropping common endings, longest first, at
+// most twice (канцелярита → канцелярит → канцеляр, the same as канцелярит) and
+// only while at least three letters remain. Crude next to a real stemmer, but
+// it makes the obvious word forms meet; applied the same way to documents and
+// queries. Latin words are left exactly as they were.
+const RU_ENDINGS = [
+  'иями', 'ями', 'ами', 'ется', 'ются', 'ого', 'его', 'ому', 'ему', 'ыми', 'ими',
+  'иях', 'ях', 'ах', 'ий', 'ый', 'ой', 'ей', 'ая', 'яя', 'ое', 'ее', 'ые', 'ие', 'ую', 'юю',
+  'ом', 'ем', 'ов', 'ев', 'ия', 'ья', 'ье', 'ам', 'ям', 'ет', 'ит', 'ут', 'ют', 'ат', 'ят',
+  'ла', 'ли', 'ло', 'ся', 'сь', 'а', 'я', 'ы', 'и', 'е', 'у', 'ю', 'о', 'ь', 'й'
+];
+
+function stripEnding(word) {
+  for (const end of RU_ENDINGS) {
+    if (word.length - end.length >= 3 && word.endsWith(end)) return word.slice(0, -end.length);
+  }
+  return word;
+}
+
+function stem(word) {
+  if (!/[а-я]/.test(word)) return word;
+  return stripEnding(stripEnding(word));
+}
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'tif', 'tiff', 'heic']);
 const CODE_EXTS = new Set(['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'py', 'go', 'rs', 'java', 'rb',
@@ -77,11 +113,12 @@ function detectModality(filePath) {
   return 'text'; // unknown → best-effort treat as text
 }
 
-/** Lowercase alphanumeric tokens, stop-words and 1-char tokens dropped. */
+/** Lowercase word tokens in any script, stop-words and 1-char tokens dropped,
+ *  Russian words cut to a rough stem (see stem). */
 function tokenize(s) {
-  const m = String(s || '').toLowerCase().match(/[a-z0-9]+/g);
+  const m = String(s || '').toLowerCase().replace(/ё/g, 'е').match(WORD_RE);
   if (!m) return [];
-  return m.filter((t) => t.length > 1 && !STOPWORDS.has(t));
+  return m.filter((t) => t.length > 1 && !STOPWORDS.has(t)).map(stem);
 }
 
 /** First markdown heading or first non-empty line, trimmed and length-capped. */

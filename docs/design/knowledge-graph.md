@@ -8,6 +8,14 @@
 
 ---
 
+> **Fork update (wave 6).** The store is now also the team's shared notebook:
+> agents save durable findings with `kg add --title … --tags … --file note.md`
+> (or the text as an argument, or on stdin), tagged `by:<agent name>`, and the
+> injected prompt tells them to search before researching from scratch. The
+> tokenizer takes words in any script, with a light Russian stemmer, so
+> Cyrillic documents and queries meet across word forms. §1's "read-mostly" no
+> longer holds for notes; the user still manages files in Settings.
+
 ## 1. Goal & shape
 
 Give every agent on the floor on-demand access to the enterprise's own context — so a task like *"draft the onboarding email in our house style"* or *"what's our refund policy?"* can be answered from the company's real documents instead of guessed.
