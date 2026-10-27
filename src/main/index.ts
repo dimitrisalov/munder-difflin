@@ -3155,6 +3155,16 @@ if (process.defaultApp) {
 // from the start instead of letting the GPU process fail and retry.
 if (process.env.MD_SERVER === '1') app.disableHardwareAcceleration();
 
+// The office runs unattended: monitors off, display asleep, screen locked,
+// nobody at the PC. Windows then reports the window as covered, Chromium marks
+// it hidden and stops driving its page, and after a restart no agent was ever
+// spawned (seen on the owner's PC with the display off and with the screen
+// locked). backgroundThrottling: false alone does not cover native occlusion.
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+if (process.platform === 'win32') app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+
 // Deep links on Windows/Linux arrive as the argv of a SECOND process — take the
 // single-instance lock and forward them to the running instance. (macOS gets
 // the 'open-url' event instead.) The lock also rules out two harnesses fighting
