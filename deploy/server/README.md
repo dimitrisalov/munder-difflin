@@ -33,7 +33,9 @@ Then, once:
 
 - `office-update` pulls the branch, rebuilds and restarts.
 - `office-status` shows the services and the browser address.
-- `office-logs` follows the office log.
+- `office-logs` follows the office log. The office also keeps its own copy,
+  one file a day for a week with keys and tokens masked, in
+  `~office/.config/munder-difflin/logs/`.
 - `office-remote` (re)starts the Remote Control session.
 
 The office runs as the unprivileged `office` user under systemd and comes back

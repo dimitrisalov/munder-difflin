@@ -405,7 +405,10 @@
         "slack": "Slack",
         "webhook": "Webhooks",
         "capabilities": "能力"
-      }
+      },
+      "logTitle": "办公室日志",
+      "logHint": "办公室输出的全部内容：每天一个文件，保留一周，密钥和令牌已隐藏。",
+      "logOpen": "打开文件夹"
     },
     "voice": {
       "freeFlow": "自由输入",

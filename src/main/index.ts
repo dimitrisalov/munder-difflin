@@ -80,6 +80,7 @@ import { ControlRegistry } from './control';
 import { WorkerWakeWatchdog, WORKER_WAKE_REPORT_MS, activityEvidenceAt, type WorkerWakeFacts } from './workerWake';
 import { inboxNudgeText } from '../shared/hiveNudge';
 import { remoteControlLabel, remoteControlLaunchArgs } from '../shared/providerAutomation';
+import { OfficeLog, officeLogCore } from './officeLog';
 import { resolveGodName } from '../shared/godIdentity';
 import { fetchHireManifest, readHireManifestFiles, listHireTemplates } from './hire';
 import { buildHireManifest, hireFileName, serializeHire } from '../shared/hireExport';
@@ -109,6 +110,13 @@ import {
 } from '../shared/codexRemote';
 
 const isDev = !!process.env.ELECTRON_RENDERER_URL;
+
+// Everything the main process prints also lands in <userData>/logs/office-<day>.log
+// (secrets masked, a week kept). Started from a shortcut there is no terminal,
+// so stdout alone went nowhere and a silent bot or stuck agent left no trace.
+const officeLog = new OfficeLog(join(app.getPath('userData'), 'logs'));
+officeLog.captureConsole();
+console.info(`[office] starting ${app.getVersion()} on ${process.platform}/${process.arch}${process.env.MD_SERVER === '1' ? ', server mode' : ''}`);
 
 // Keep the main process alive on an unexpected throw/rejection. The harness is a
 // multi-agent supervisor — a single stray throw (e.g. node-pty's ConPTY console
@@ -3329,6 +3337,16 @@ function createWindow(opts: { floor?: boolean } = {}): BrowserWindow {
     if (details.isMainFrame) rendererReadyForHires = false;
   });
 
+  // The window's own warnings and errors go to the office log too (they never
+  // reach stdout), and so does a renderer that dies.
+  win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    const lvl = officeLogCore.rendererLevel(level);
+    if (lvl) officeLog.write(lvl, `${message}${sourceId ? ` (${basename(sourceId)}:${line})` : ''}`, isFloor ? 'floor' : 'window');
+  });
+  win.webContents.on('render-process-gone', (_e, details) => {
+    console.error(`[window] renderer gone: ${details.reason} (exit code ${details.exitCode})`);
+  });
+
   if (isDev && process.env.ELECTRON_RENDERER_URL) {
     win.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
@@ -4556,6 +4574,14 @@ ipcMain.handle('integrations:status', () => {
     })
   ];
   return { items, events: integrationEvents.list() };
+});
+
+/** Where the office log lives (wave 5), and a way to open its folder. */
+ipcMain.handle('logs:info', () => ({ folder: officeLog.folder, file: officeLog.currentFile }));
+ipcMain.handle('logs:openFolder', async () => {
+  try { mkdirSync(officeLog.folder, { recursive: true }); } catch { /* openPath reports it */ }
+  const err = await shell.openPath(officeLog.folder);
+  return err ? { ok: false, error: err } : { ok: true };
 });
 
 /** A catalog MCP server that this app already bundles: turn it on for agents. */

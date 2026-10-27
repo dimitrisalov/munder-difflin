@@ -1064,6 +1064,11 @@ const api = {
   /** Every outside connection's state and the last 50 events on them. */
   integrationsStatus: (): Promise<IntegrationsStatus> =>
     ipcRenderer.invoke('integrations:status'),
+  /** The office log: its folder and today's file. */
+  officeLogInfo: (): Promise<{ folder: string; file: string }> =>
+    ipcRenderer.invoke('logs:info'),
+  openOfficeLogFolder: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('logs:openFolder'),
   /** Capabilities catalog (signed, public-domain list) with this machine's state. */
   capabilitiesList: (force?: boolean): Promise<CapabilitiesList> =>
     ipcRenderer.invoke('capabilities:list', force === true),

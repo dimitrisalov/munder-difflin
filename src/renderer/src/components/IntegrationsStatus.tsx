@@ -6,7 +6,7 @@ import type { IntegrationsStatus as Status } from '../../../preload';
  * Settings → Connections → Status: every outside connection at a glance
  * (Telegram, mobile panel, Slack, webhooks, REST integrations) and the last 50
  * events on them, newest first. Read-only; each connection is set up in its
- * own block further down.
+ * own block further down. Ends with where the office log is (wave 5).
  */
 
 const POLL_MS = 5000;
@@ -24,6 +24,11 @@ export function IntegrationsStatus() {
   const { t } = useTranslation();
   const [status, setStatus] = useState<Status | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [logFile, setLogFile] = useState('');
+
+  useEffect(() => {
+    window.cth.officeLogInfo().then((l) => setLogFile(l.file)).catch(() => { /* older main */ });
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -81,6 +86,19 @@ export function IntegrationsStatus() {
           )}
         </div>
       )}
+      <div style={headStyle}>{t('settings.connections.logTitle')}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
+        <span style={{ fontSize: 12, color: 'var(--cth-ink-700)' }}>{t('settings.connections.logHint')}</span>
+        {logFile && (
+          <span style={{ fontFamily: 'var(--cth-font-mono)', fontSize: 11, color: 'var(--cth-ink-500)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }} title={logFile}>
+            {logFile}
+          </span>
+        )}
+        <button onClick={() => { void window.cth.openOfficeLogFolder(); }} style={{
+          border: 'none', background: 'transparent', cursor: 'pointer', padding: 0,
+          fontSize: 12, color: 'var(--cth-ink-700)', textDecoration: 'underline'
+        }}>{t('settings.connections.logOpen')}</button>
+      </div>
     </div>
   );
 }

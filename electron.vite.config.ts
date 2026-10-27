@@ -42,7 +42,9 @@ function copyMainSidecars() {
     // Ticket keys for kanban cards, required by tickets.ts.
     ['src/main/tickets-core.cjs', 'out/main/tickets-core.cjs'],
     // Capabilities catalog checks, required by capabilities.ts.
-    ['src/main/capabilities-core.cjs', 'out/main/capabilities-core.cjs']
+    ['src/main/capabilities-core.cjs', 'out/main/capabilities-core.cjs'],
+    // Office log file decisions, required by officeLog.ts.
+    ['src/main/officeLog-core.cjs', 'out/main/officeLog-core.cjs']
   ];
   return {
     name: 'copy-main-cjs-sidecars',

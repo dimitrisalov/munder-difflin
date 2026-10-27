@@ -405,7 +405,10 @@
         "slack": "Slack",
         "webhook": "Webhooks",
         "capabilities": "Capabilities"
-      }
+      },
+      "logTitle": "Office log",
+      "logHint": "Everything the office prints, one file a day, kept for a week, keys and tokens masked.",
+      "logOpen": "open folder"
     },
     "voice": {
       "freeFlow": "Free Flow",
