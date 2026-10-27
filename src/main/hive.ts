@@ -528,13 +528,16 @@ export class HiveManager {
   private writeNodeLauncher(): void {
     const p = this.nodeLauncherPath();
     if (!p) return;
+    const win = process.platform === 'win32';
+    const body = win
+      ? `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${process.execPath}" %*\r\n`
+      : `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec "${process.execPath}" "$@"\n`;
+    // Already right: leave it alone. On Windows a hook running through the
+    // .cmd keeps it open, and rewriting it then fails with EBUSY.
+    try { if (readFileSync(p, 'utf8') === body) return; } catch { /* not written yet */ }
     try {
-      if (process.platform === 'win32') {
-        writeFileSync(p, `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${process.execPath}" %*\r\n`, 'utf8');
-      } else {
-        writeFileSync(p, `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec "${process.execPath}" "$@"\n`, 'utf8');
-        chmodSync(p, 0o755);
-      }
+      writeFileSync(p, body, 'utf8');
+      if (!win) chmodSync(p, 0o755);
     } catch (e) {
       console.error('[hive] writeNodeLauncher failed:', e);
     }
