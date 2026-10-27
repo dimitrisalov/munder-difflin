@@ -24,6 +24,7 @@ import { AiEnginesSettings } from './AiEnginesSettings';
 import { TelegramSettings } from './TelegramSettings';
 import { PeriodLimitsSettings } from './PeriodLimitsSettings';
 import { WorkSwitchSettings } from './WorkSwitchSettings';
+import { PanelSettings } from './PanelSettings';
 import { REALTIME_MODEL } from '@shared/realtimePricing';
 import { RealtimeDevicePicker } from '@/realtime/DevicePicker';
 import { CostHud } from '@/realtime/CostHud';
@@ -1628,6 +1629,11 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
 
                       {/* Telegram — the owner's phone ↔ the orchestrator, long polling, no tunnel. */}
                       <TelegramSettings godName={godName} />
+
+                      <div style={sectionRule} />
+
+                      {/* Mobile panel — a phone page served only on the Tailscale address. */}
+                      <PanelSettings />
 
                       <div style={sectionRule} />
 

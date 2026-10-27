@@ -42,6 +42,8 @@ import {
 } from './telegram';
 import { transcribeVoice, resolveEngine, validLocalUrl, type VoiceSettings, type TranscribeEngine } from './transcribe';
 import { PeriodLimitTracker, periodCore, type LimitItem } from './periodLimits';
+import { PanelServer, panelCore } from './panel';
+import { networkInterfaces } from 'node:os';
 import {
   WebhookServer,
   type WebhookDispatch, type WebhookEndpointRef, type WebhookInbound, type WebhookTaskStatus
@@ -1843,6 +1845,8 @@ interface TelegramLedger {
 }
 interface TelegramStrings {
   paired: (name: string) => string;
+  panelLink: (url: string) => string;
+  panelOff: string;
   answerPicked: (n: number) => string;
   dismissed: string;
   heard: (t: string) => string;
@@ -1870,7 +1874,7 @@ const tgCore = require('./telegram-core.cjs') as {
   formatAsk: (ask: TelegramAsk, lang: string) => string;
   formatStatus: (registry: unknown, tasks: unknown, lang: string) => string;
   formatTasks: (tasks: unknown, lang: string) => string;
-  buildRequestProtocol: (o: { nodeCommand: string; helperPath: string; messageId: number; taskId: string }) => string;
+  buildRequestProtocol: (o: { nodeCommand: string; helperPath: string; messageId: number; taskId: string; source?: 'telegram' | 'panel' }) => string;
   escapeHtml: (s: string) => string;
   truncate: (s: string, n: number) => string;
   formatLimitAlert: (item: LimitItem & { name?: string }, level: 'warn' | 'over', lang: string) => string;
@@ -2178,6 +2182,11 @@ async function handleTelegramCommand(cmd: string, messageId: number, lang: strin
       if (!hive.enabled()) { await telegramSendToOwner(S.hiveOff, messageId); return; }
       await telegramSendToOwner(tgCore.formatTasks(hiveTaskList(), lang), messageId);
       return;
+    case 'panel': {
+      const st = panelStatus();
+      await telegramSendToOwner(st.running && st.url ? S.panelLink(tgCore.escapeHtml(st.url)) : S.panelOff, messageId);
+      return;
+    }
     case 'limits': {
       const names = hive.enabled()
         ? Object.fromEntries(Object.entries(hive.registry().agents).map(([id, a]) => [id, a.name ?? id]))
@@ -2258,32 +2267,37 @@ async function dispatchTelegramWork(
   if (failed > 0) await telegramSendToOwner(S.filesFailed(failed), d.messageId);
 }
 
-/** The owner replied to a forwarded question: same two steps as the ASK ME tab —
- *  record the answer on the card, then tell god so the card gets unblocked. */
-async function answerTelegramAsk(taskId: string, q: string, answer: string, messageId: number, lang: string): Promise<void> {
-  const S = tgCore.strings(lang);
+/** Answer the open question on a card: the same two steps as the ASK ME tab —
+ *  record it in humanQA, then tell god so the card gets unblocked. False when
+ *  that question is no longer open (answered elsewhere, dismissed, replaced). */
+function answerAskOnCard(taskId: string, q: string, answer: string, via: string): { ok: boolean; title?: string } {
   const task = hiveTaskList().find((t) => t.id === taskId);
   const humanQA = task ? tgCore.applyAnswer(task, q, answer, new Date().toISOString()) : null;
-  if (!task || !humanQA || !hive.patchTask(task.id, { humanQA })) {
-    await telegramSendToOwner(S.answerStale, messageId);
-    return;
-  }
+  if (!task || !humanQA || !hive.patchTask(task.id, { humanQA })) return { ok: false };
   try {
     hive.send({
       to: 'god',
       act: 'inform',
       subject: `HUMAN ANSWER on task "${task.title}"`,
       body: [
-        `The human answered the open question on task ${task.id} ("${task.title}") from Telegram:`,
+        `The human answered the open question on task ${task.id} ("${task.title}") from ${via}:`,
         `Q: ${q}`,
         `A: ${answer}`,
         'The answer is also recorded in the card\'s humanQA. Act on it, unblock the card, and continue the work.'
       ].join('\n')
     }, 'human');
   } catch (e) {
-    console.error('[telegram] could not tell god about the answer:', e instanceof Error ? e.message : e);
+    console.error('[ask] could not tell god about the answer:', e instanceof Error ? e.message : e);
   }
-  await telegramSendToOwner(S.answerSaved(tgCore.escapeHtml(tgCore.truncate(task.title, 120))), messageId);
+  return { ok: true, title: task.title };
+}
+
+/** The owner replied to a forwarded question in Telegram. */
+async function answerTelegramAsk(taskId: string, q: string, answer: string, messageId: number, lang: string): Promise<void> {
+  const S = tgCore.strings(lang);
+  const r = answerAskOnCard(taskId, q, answer, 'Telegram');
+  if (!r.ok) { await telegramSendToOwner(S.answerStale, messageId); return; }
+  await telegramSendToOwner(S.answerSaved(tgCore.escapeHtml(tgCore.truncate(r.title ?? taskId, 120))), messageId);
 }
 
 /** One pass over the kanban: forward new open questions, and the summary of
@@ -2394,6 +2408,120 @@ function stopTelegram(): void {
   if (telegramWatchTimer) { clearInterval(telegramWatchTimer); telegramWatchTimer = null; }
   telegramDoneBaseline = null;
   try { if (existsSync(telegramReplyConfigPath())) unlinkSync(telegramReplyConfigPath()); } catch { /* noop */ }
+}
+
+// ─── Mobile office panel (phone over Tailscale) ──────────────────────────────
+// A small page served ONLY on this machine's Tailscale address (panel.ts /
+// panel-core.cjs). Settings live in userData/panel.json, outside HarnessConfig,
+// so the access token never rides config:get into the renderer.
+
+interface PanelSettings { enabled?: boolean; port?: number; token?: string }
+const PANEL_DEFAULT_PORT = 8091;
+let panelServer: PanelServer | null = null;
+let panelHost: string | null = null;
+let panelLastError: string | undefined;
+
+function panelSettingsPath(): string { return join(app.getPath('userData'), 'panel.json'); }
+function panelSettings(): PanelSettings { return readJsonFile<PanelSettings>(panelSettingsPath()) ?? {}; }
+function writePanelSettings(patch: Partial<PanelSettings>): PanelSettings {
+  const next = { ...panelSettings(), ...patch };
+  try { writeFileSync(panelSettingsPath(), JSON.stringify(next), { mode: 0o600 }); }
+  catch (e) { console.error('[panel] could not save settings:', e instanceof Error ? e.message : e); }
+  return next;
+}
+
+function panelStatus(): { enabled: boolean; running: boolean; url?: string; host?: string; port: number; error?: string } {
+  const s = panelSettings();
+  const port = s.port ?? PANEL_DEFAULT_PORT;
+  const running = panelServer?.running === true;
+  return {
+    enabled: s.enabled === true,
+    running,
+    host: panelHost ?? undefined,
+    port,
+    url: running && panelHost && s.token ? `http://${panelHost}:${port}/?k=${s.token}` : undefined,
+    error: panelLastError
+  };
+}
+
+function notifyPanelState(): void {
+  try { liveWebContents()?.send('panel:state', panelStatus()); } catch { /* window gone */ }
+}
+
+/** A task typed on the panel: a kanban card + a request to god. When Telegram is
+ *  paired the card is Telegram-tracked, so the result and questions reach the
+ *  phone the same way as a task sent from the bot. */
+async function dispatchPanelTask(text: string): Promise<{ ok: boolean; taskId?: string; error?: string }> {
+  if (!hive.enabled()) return { ok: false, error: 'the office is not running' };
+  const taskId = `panel-${randomBytes(6).toString('hex')}`;
+  const title = tgCore.truncate(text.split('\n')[0] ?? text, 80);
+  const tg = telegramSettings();
+  const viaTelegram = !!tg.botToken && tg.ownerChatId !== undefined && telegramBot?.isRunning === true;
+  try {
+    hive.addTask({
+      id: taskId, title, description: text, status: 'todo', dependsOn: [], priority: 1,
+      createdAt: new Date().toISOString(),
+      ...(viaTelegram ? { telegram: { chat_id: tg.ownerChatId as number, message_id: 0 } } : {})
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+  const header = viaTelegram
+    ? tgCore.buildRequestProtocol({ nodeCommand: hive.nodeCommand(), helperPath: telegramReplyScriptPath(), messageId: 0, taskId, source: 'panel' })
+    : `[Inbound from the owner's mobile panel, tracked as kanban card ${taskId}. When finished set the card's status to 'done' and fill its 'result'.]`;
+  try {
+    hive.send({ to: 'god', act: 'request', subject: `[panel] ${title}`, body: `${header}\n${text}`, requires_reply: false }, 'human');
+  } catch (e) {
+    console.error('[panel] could not route to god:', e instanceof Error ? e.message : e);
+  }
+  return { ok: true, taskId };
+}
+
+/** Start (or restart) the panel on the Tailscale address. Persists `enabled`. */
+async function startPanel(): Promise<ReturnType<typeof panelStatus>> {
+  stopPanel();
+  const host = panelCore.pickTailscaleIPv4(networkInterfaces());
+  if (!host) {
+    panelLastError = 'Tailscale address not found on this machine';
+    notifyPanelState();
+    return panelStatus();
+  }
+  const s = panelSettings().token ? panelSettings() : writePanelSettings({ token: panelCore.newAccessToken() });
+  const server = new PanelServer({
+    host,
+    port: s.port ?? PANEL_DEFAULT_PORT,
+    getToken: () => panelSettings().token,
+    getState: () => panelCore.buildState({
+      registry: hive.enabled() ? hive.registry() : { godId: null, agents: {} },
+      tasks: hiveTaskList(),
+      limits: { config: readConfig().periodLimits ?? {}, usage: periodTracker.snapshot() },
+      now: Date.now()
+    }),
+    onTask: dispatchPanelTask,
+    onAnswer: async (taskId, q, answer) => {
+      const r = answerAskOnCard(taskId, q, answer, 'the mobile panel');
+      return r.ok ? { ok: true } : { ok: false, error: 'this question is no longer open' };
+    }
+  });
+  const r = await server.start();
+  if (!r.ok) {
+    panelLastError = r.error;
+    notifyPanelState();
+    return panelStatus();
+  }
+  panelServer = server;
+  panelHost = host;
+  panelLastError = undefined;
+  writePanelSettings({ enabled: true });
+  notifyPanelState();
+  return panelStatus();
+}
+
+/** Lifecycle-safe stop; does NOT clear `enabled` (only the user's Stop does). */
+function stopPanel(): void {
+  try { panelServer?.stop(); } catch { /* noop */ }
+  panelServer = null;
+  panelHost = null;
 }
 
 // ─── Generic inbound webhook + status API (multi-endpoint) ───────────────────
@@ -3910,6 +4038,7 @@ ipcMain.handle('config:changeHome', async (_evt, payload: unknown) => {
   try { hookServer.stop(); } catch (e) { console.error('[changeHome] hookServer.stop:', e); }
   try { stopSlackServer(); } catch (e) { console.error('[changeHome] slack.stop:', e); }
   try { stopTelegram(); } catch (e) { console.error('[changeHome] telegram.stop:', e); }
+  try { stopPanel(); } catch (e) { console.error('[changeHome] panel.stop:', e); }
   try { stopWebhookServer(); } catch (e) { console.error('[changeHome] webhook.stop:', e); }
   try { memory.stop(); } catch (e) { console.error('[changeHome] memory.stop:', e); }
   try { reflector.stop(); } catch (e) { console.error('[changeHome] reflector.stop:', e); }
@@ -3936,6 +4065,7 @@ ipcMain.handle('config:changeHome', async (_evt, payload: unknown) => {
       if (cfg.slackEnabled && cfg.slackSigningSecret) void startSlackServer();
       const tg = telegramSettings();
       if (tg.enabled && tg.botToken) void startTelegram();
+      if (panelSettings().enabled) void startPanel();
       reconcileWebhookServer();
       return { ok: false, error: `Could not copy data: ${e instanceof Error ? e.message : String(e)}` };
     }
@@ -4414,6 +4544,7 @@ function teardownAndQuit(): void {
   try { telemetry.stop(); } catch (e) { console.error('[quit] telemetry.stop:', e); }
   try { stopSlackServer(); } catch (e) { console.error('[quit] slack.stop:', e); }
   try { stopTelegram(); } catch (e) { console.error('[quit] telegram.stop:', e); }
+  try { stopPanel(); } catch (e) { console.error('[quit] panel.stop:', e); }
   try { stopWebhookServer(); } catch (e) { console.error('[quit] webhook.stop:', e); }
   try { memory.stop(); } catch (e) { console.error('[quit] memory.stop:', e); }
   try { reflector.stop(); } catch (e) { console.error('[quit] reflector.stop:', e); }
@@ -4476,9 +4607,10 @@ ipcMain.handle('app:resetAll', () => {
   try { telemetry.stop(); } catch (e) { console.error('[reset] telemetry.stop:', e); }
   try { stopSlackServer(); } catch (e) { console.error('[reset] slack.stop:', e); }
   try { stopTelegram(); } catch (e) { console.error('[reset] telegram.stop:', e); }
+  try { stopPanel(); } catch (e) { console.error('[reset] panel.stop:', e); }
   // Telegram keeps its token and pairing outside the config file; a reset forgets
   // them too, or the bot would come back paired after "back to first-run".
-  for (const f of [telegramSettingsPath(), telegramRuntimePath()]) {
+  for (const f of [telegramSettingsPath(), telegramRuntimePath(), panelSettingsPath()]) {
     try { if (existsSync(f)) unlinkSync(f); } catch (e) { console.error('[reset] rm', f, e); }
   }
   try { memory.stop(); } catch (e) { console.error('[reset] memory.stop:', e); }
@@ -4876,6 +5008,23 @@ ipcMain.handle('limits:get', async () => {
 });
 /** Main-side write so a renderer snapshot can never drop limits set elsewhere;
  *  the value is sanitized (positive whole tokens, known periods only). */
+// ─── IPC: mobile office panel ───────────────────────────────────────────────
+ipcMain.handle('panel:status', () => panelStatus());
+ipcMain.handle('panel:start', () => startPanel());
+ipcMain.handle('panel:stop', () => {
+  writePanelSettings({ enabled: false });
+  stopPanel();
+  panelLastError = undefined;
+  notifyPanelState();
+  return panelStatus();
+});
+/** New access token: every old link and phone cookie stops working. */
+ipcMain.handle('panel:rotate', async () => {
+  writePanelSettings({ token: panelCore.newAccessToken() });
+  if (panelServer) return startPanel();
+  notifyPanelState();
+  return panelStatus();
+});
 ipcMain.handle('limits:set', (_evt, raw: unknown) => {
   const next = periodCore.sanitizeLimits(raw);
   writeConfig({ periodLimits: Object.keys(next).length > 0 ? next : undefined });
@@ -6171,6 +6320,13 @@ app.whenReady().then(() => {
     void startTelegram().then((st) => {
       if (st.error) console.error('[telegram] auto-start failed:', st.error);
       else console.log('[telegram] polling as', st.botUsername ? `@${st.botUsername}` : '(unknown bot)');
+    });
+  }
+  // The mobile panel comes back if the user left it on (Tailscale must be up).
+  if (panelSettings().enabled) {
+    void startPanel().then((st) => {
+      if (st.error) console.error('[panel] auto-start failed:', st.error);
+      else console.log('[panel] serving on', `${st.host}:${st.port}`);
     });
   }
   // Auto-start the generic webhook only for endpoints the user has explicitly

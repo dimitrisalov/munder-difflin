@@ -346,6 +346,8 @@ class MessageLedger {
 const STRINGS = {
   ru: {
     paired: (name) => `Готово, ${name}: бот привязан к тебе. Пиши задачи для офиса прямо сюда.\n\n/help — что я умею.`,
+    panelLink: (url) => `📱 Панель офиса (работает только при включённом Tailscale):\n${url}\n\nДобавь её на экран «Домой». Ссылку никому не пересылай.`,
+    panelOff: 'Мобильная панель выключена. Включается в Settings → Connections → Mobile panel.',
     help: [
       'Я связь с офисом.',
       '',
@@ -357,7 +359,8 @@ const STRINGS = {
       '/status — кто из агентов чем занят',
       '/tasks — открытые задачи',
       '/asks — вопросы, которые ждут твоего ответа',
-      '/limits — расход токенов за 5 часов, сутки, неделю и месяц'
+      '/limits — расход токенов за 5 часов, сутки, неделю и месяц',
+      '/panel — ссылка на мобильную панель офиса'
     ].join('\n'),
     accepted: (taskId) => `Принято, передал Michael. Задача ${taskId}.`,
     acceptedFollowUp: (taskId) => `Принято, передал Michael как продолжение задачи ${taskId}.`,
@@ -397,6 +400,8 @@ const STRINGS = {
   },
   en: {
     paired: (name) => `Done, ${name}: this bot is now paired to you. Send tasks for the office right here.\n\n/help — what I can do.`,
+    panelLink: (url) => `📱 Office panel (works only with Tailscale on):\n${url}\n\nAdd it to your Home Screen. Do not forward this link.`,
+    panelOff: 'The mobile panel is off. Turn it on in Settings → Connections → Mobile panel.',
     help: [
       'I am your line to the office.',
       '',
@@ -408,7 +413,8 @@ const STRINGS = {
       '/status — what each agent is doing',
       '/tasks — open tasks',
       '/asks — questions waiting for your answer',
-      '/limits — token use over 5 hours, a day, a week and a month'
+      '/limits — token use over 5 hours, a day, a week and a month',
+      '/panel — link to the mobile office panel'
     ].join('\n'),
     accepted: (taskId) => `Got it, passed to Michael. Task ${taskId}.`,
     acceptedFollowUp: (taskId) => `Got it, passed to Michael as a follow-up to task ${taskId}.`,
@@ -568,9 +574,11 @@ function formatLimits(status, lang) {
  * real result back with the helper rather than a bare "done".
  */
 function buildRequestProtocol(opts) {
-  const reply = `"${opts.nodeCommand}" "${opts.helperPath}" --reply-to ${opts.messageId} --text "<message>"`;
+  const replyTo = opts.messageId ? ` --reply-to ${opts.messageId}` : '';
+  const reply = `"${opts.nodeCommand}" "${opts.helperPath}"${replyTo} --text "<message>"`;
+  const from = opts.source === 'panel' ? 'the mobile office panel' : 'Telegram';
   return [
-    `[TELEGRAM REQUEST PROTOCOL — the owner sent this from Telegram on their phone; tracked as kanban card ${opts.taskId}]`,
+    `[TELEGRAM REQUEST PROTOCOL — the owner sent this from ${from} on their phone and reads replies in Telegram; tracked as kanban card ${opts.taskId}]`,
     '1. ROUTE FAST — check the live roster (registry.json, fleet.json) and hand this to the single best-fitting existing agent; do small things yourself.',
     `2. DELEGATE WITH THE REPLY HANDLE — tell that agent to post its real result back to the owner itself when done, using exactly: ${reply}`,
     '   For long text, write it to a file and pass --text-file <path> instead of --text. To send a result file (image, PDF, document) add --file <absolute path>; --text then becomes its caption.',

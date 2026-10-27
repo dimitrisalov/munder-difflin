@@ -10,6 +10,8 @@ const MAIN_ASSETS = [
   ['src/main/telegram-core.cjs', 'out/main/telegram-core.cjs'],
   // Token limits per period (pure CJS) — required by periodLimits.ts.
   ['src/main/periodUsage.cjs', 'out/main/periodUsage.cjs'],
+  // Mobile office panel (pure CJS) — required by panel.ts.
+  ['src/main/panel-core.cjs', 'out/main/panel-core.cjs'],
   // Knowledge Graph core (pure-JS, no native deps) — required by knowledge.ts.
   ['src/main/kg-core.cjs', 'out/main/kg-core.cjs'],
 ];

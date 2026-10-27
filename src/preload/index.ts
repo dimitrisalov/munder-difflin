@@ -171,6 +171,17 @@ export interface LimitsStatus {
   hardStop: boolean;
 }
 
+/** Mobile office panel state. `url` carries the access token: shown only in
+ *  Settings, never logged. */
+export interface PanelStatus {
+  enabled: boolean;
+  running: boolean;
+  url?: string;
+  host?: string;
+  port: number;
+  error?: string;
+}
+
 /** Telegram integration state as Settings sees it — never carries the token. */
 export interface TelegramStatus {
   enabled: boolean;
@@ -1218,6 +1229,18 @@ const api = {
     proactivePosting?: boolean;
   }): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('slack:setConfig', patch),
+
+  // ─── Mobile office panel (phone over Tailscale) ─────────────────────────────
+  panelStatus: (): Promise<PanelStatus> => ipcRenderer.invoke('panel:status'),
+  panelStart: (): Promise<PanelStatus> => ipcRenderer.invoke('panel:start'),
+  panelStop: (): Promise<PanelStatus> => ipcRenderer.invoke('panel:stop'),
+  /** New access token: old links and phone cookies stop working. */
+  panelRotate: (): Promise<PanelStatus> => ipcRenderer.invoke('panel:rotate'),
+  onPanelState: (cb: (s: PanelStatus) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, s: PanelStatus): void => cb(s);
+    ipcRenderer.on('panel:state', listener);
+    return () => ipcRenderer.removeListener('panel:state', listener);
+  },
 
   // ─── Token limits per period ─────────────────────────────────────────────────
   /** Current limits, usage per rolling window and breaker posture. */
