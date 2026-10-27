@@ -60,10 +60,10 @@ class Canvas {
 }
 
 // ─── head ────────────────────────────────────────────────────────────────────
-// Ears: very large, wide at the base, softly rounded tips, pink almost to the
-// rim (left; the right one mirrors).
-const EAR: Array<[number, number, number]> = [[0, 2, 2], [1, 1, 3], [2, 1, 4], [3, 1, 5], [4, 2, 6], [5, 2, 6], [6, 3, 6], [7, 4, 6]];
-const EAR_INNER: Array<[number, number, number]> = [[2, 2, 3], [3, 2, 4], [4, 3, 5], [5, 3, 5], [6, 4, 5]];
+// Ears: very large triangles — a straight outer edge, a straight slope down to
+// the crown, a pointed tip — pink almost to the rim (left; the right mirrors).
+const EAR: Array<[number, number, number]> = [[0, 2, 2], [1, 2, 3], [2, 2, 4], [3, 2, 5], [4, 2, 6], [5, 2, 7], [6, 3, 6]];
+const EAR_INNER: Array<[number, number, number]> = [[2, 3, 3], [3, 3, 4], [4, 3, 5], [5, 3, 6]];
 // Skull + face rows: [y, x0, x1] — a round face with full cheeks, short chin.
 const HEAD: Array<[number, number, number]> = [
   [5, 6, 11], [6, 5, 12], [7, 4, 13], [8, 3, 14], [9, 3, 14], [10, 3, 14],
@@ -79,7 +79,7 @@ function drawEars(c: Canvas, inner: boolean): void {
     return;
   }
   for (const [y, x0, x1] of EAR_INNER) { c.row(y, x0, x1, EAR_IN); c.row(y, mirror(x1), mirror(x0), EAR_IN); }
-  for (const [x, y] of [[2, 3], [3, 5]] as const) { c.set(x, y, EAR_IN_SH); c.set(mirror(x), y, EAR_IN_SH); }
+  for (const [x, y] of [[3, 4], [3, 5]] as const) { c.set(x, y, EAR_IN_SH); c.set(mirror(x), y, EAR_IN_SH); }
 }
 
 function drawSkull(c: Canvas): void {
