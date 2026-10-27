@@ -202,3 +202,36 @@ test('the request protocol embeds the exact reply command and the card id', () =
 test('unknown language falls back to Russian', () => {
   assert.equal(core.strings('de'), core.strings('ru'));
 });
+
+test('fmtTokens: compact millions and thousands per language', () => {
+  assert.equal(core.fmtTokens(1_234_567, 'ru'), '1,2 млн');
+  assert.equal(core.fmtTokens(1_234_567, 'en'), '1.2M');
+  assert.equal(core.fmtTokens(850_000, 'ru'), '850 тыс.');
+  assert.equal(core.fmtTokens(850_000, 'en'), '850k');
+  assert.equal(core.fmtTokens(42, 'en'), '42');
+});
+
+test('formatLimitAlert: warning shows the share, overrun says agents are held back', () => {
+  const warn = core.formatLimitAlert({ scope: 'office', period: '5h', used: 2_500_000, limit: 3_000_000 }, 'warn', 'en');
+  assert.match(warn, /Token limit: 83%/);
+  assert.match(warn, /Office in 5 hours: 2.5M of 3M/);
+  const over = core.formatLimitAlert({ scope: 'agent', name: '<Kelly>', period: 'day', used: 1_100_000, limit: 1_000_000 }, 'over', 'en');
+  assert.match(over, /Token limit reached/);
+  assert.match(over, /Agent &lt;Kelly&gt; in a day/);
+  assert.match(over, /held back/);
+});
+
+test('formatLimits: office periods with and without limits, agents by name, hint when nothing is set', () => {
+  const usage = {
+    '5h': { floor: { work: 1_200_000 }, agents: { k: { work: 400_000 } } },
+    day: { floor: { work: 2_000_000 }, agents: { k: { work: 900_000 } } },
+    week: { floor: { work: 5_000_000 }, agents: {} },
+    month: { floor: { work: 9_000_000 }, agents: {} }
+  };
+  const out = core.formatLimits({ config: { office: { '5h': 3_000_000 }, agents: { k: { day: 1_000_000 } } }, usage, names: { k: 'Kelly' } }, 'en');
+  assert.match(out, /in 5 hours: 1.2M of 3M \(40%\)/);
+  assert.match(out, /in a day: 2M\n/);
+  assert.match(out, /<b>Kelly<\/b>: in a day 900k of 1M/);
+  const none = core.formatLimits({ config: {}, usage }, 'ru');
+  assert.match(none, /Лимиты не заданы/);
+});

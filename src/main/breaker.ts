@@ -64,6 +64,11 @@ export interface BreakerInput {
    *  the first question. Optional, so a caller with no workspace notion for an
    *  agent omits it and nothing about that agent changes. */
   lastWorkAt?: number;
+  /** Set when a token limit per period (office or this agent's own, see
+   *  periodUsage.cjs) is used up this beat. Trips like the per-agent cap, so it
+   *  climbs the same steer → constrain → stop ladder and recovers the same way
+   *  once the rolling window frees up. */
+  limitTrip?: string;
 }
 
 const LEVELS: BreakerLevel[] = ['healthy', 'steering', 'constrained', 'stopped'];
@@ -355,6 +360,11 @@ export class CircuitBreaker {
       if (work > perAgentCap) {
         return { tripping: true, reason: `token limit: ${work.toLocaleString()} work tokens over the agent cap of ${perAgentCap.toLocaleString()} (${tokensOf(input.sample).toLocaleString()} total incl. cache reads)` };
       }
+    }
+    // (a) token limit per period — computed by the caller from the rolling ledger
+    // windows; the breaker only owns the ladder.
+    if (input.limitTrip) {
+      return { tripping: true, reason: input.limitTrip };
     }
     // (a) cost cap — floor total over cap, this agent is the biggest spender
     if (isTopSpender && typeof costCapUsd === 'number') {

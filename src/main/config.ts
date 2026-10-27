@@ -13,6 +13,7 @@ import { defaultMcpDefaults } from '../shared/mcpCatalog';
 import { MAX_AGENT_TOKEN_CAP } from '../shared/tokenCaps';
 import { expandTilde, normalizeHiveHome } from './fs';
 import type { IntegrationRecord } from '../shared/integrations';
+import type { PeriodLimitsConfig } from './periodLimits';
 import {
   DEFAULT_CONTEXT_TRIGGER,
   DEFAULT_ORG_TRIGGER,
@@ -248,6 +249,12 @@ export interface HarnessConfig {
    *  budget, which sums all kinds). Set from each agent's card in the Command
    *  Center. */
   agentTokenCaps?: Record<string, number>;
+  /** Token limits per ROLLING period (5h / day / week / month) for the whole
+   *  office and per agent, in WORK tokens (cache reads excluded, like
+   *  agentTokenCaps). Office over its limit trips every agent; an agent over its
+   *  own limit trips that agent. Opt-in: unset means no period limits. See
+   *  periodUsage.cjs. Written through the `limits:set` IPC (main-side merge). */
+  periodLimits?: PeriodLimitsConfig;
   /** Agent ids whose automatic inbox/queue delivery is paused. Pending messages
    *  stay durable until the operator explicitly resumes delivery. */
   autoDeliveryPausedAgents?: string[];

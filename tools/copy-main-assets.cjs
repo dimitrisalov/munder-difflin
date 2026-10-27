@@ -8,6 +8,8 @@ const MAIN_ASSETS = [
   ['src/main/slack-trigger.cjs', 'out/main/slack-trigger.cjs'],
   // Telegram decision + formatting core (pure CJS) — required by index.ts/telegram.ts.
   ['src/main/telegram-core.cjs', 'out/main/telegram-core.cjs'],
+  // Token limits per period (pure CJS) — required by periodLimits.ts.
+  ['src/main/periodUsage.cjs', 'out/main/periodUsage.cjs'],
   // Knowledge Graph core (pure-JS, no native deps) — required by knowledge.ts.
   ['src/main/kg-core.cjs', 'out/main/kg-core.cjs'],
 ];

@@ -32,7 +32,9 @@ function copyMainSidecars() {
     // Slack sidecar above.
     ['src/main/kg-core.cjs', 'out/main/kg-core.cjs'],
     // Telegram decision + formatting core, required by index.ts and telegram.ts.
-    ['src/main/telegram-core.cjs', 'out/main/telegram-core.cjs']
+    ['src/main/telegram-core.cjs', 'out/main/telegram-core.cjs'],
+    // Token limits per period, required by periodLimits.ts.
+    ['src/main/periodUsage.cjs', 'out/main/periodUsage.cjs']
   ];
   return {
     name: 'copy-main-cjs-sidecars',

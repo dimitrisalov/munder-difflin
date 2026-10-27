@@ -448,4 +448,38 @@ test('a healthy beat de-escalates one level', () => {
   assert.equal(d.state.level, 'healthy');
 });
 
+// ── token limits per period (limitTrip from periodUsage.cjs) ─────────────────
+
+test('a limitTrip climbs the ladder like a cap and recovers when it clears', () => {
+  const b = makeBreaker();
+  const trip = 'office 5h token limit: 3,100,000 of 3,000,000 work tokens used';
+  let d = b.tick([{ agentId: 'a', sample: null, progressing: true, limitTrip: trip }], T0)[0];
+  assert.equal(d.state.level, 'steering');
+  assert.equal(d.state.reason, trip);
+  d = b.tick([{ agentId: 'a', sample: null, progressing: true, limitTrip: trip }], T0 + BEAT)[0];
+  assert.equal(d.state.level, 'constrained');
+  assert.equal(d.action, 'constrain');
+  // Without hardStop the ladder caps at constrained.
+  d = b.tick([{ agentId: 'a', sample: null, progressing: true, limitTrip: trip }], T0 + 2 * BEAT)[0];
+  assert.equal(d.state.level, 'constrained');
+  // The rolling window frees up: one level back per healthy beat.
+  d = b.tick([{ agentId: 'a', sample: null, progressing: true }], T0 + 3 * BEAT)[0];
+  assert.equal(d.state.level, 'steering');
+});
+
+test('a limitTrip with hardStop reaches stopped', () => {
+  const b = makeBreaker({ hardStop: true });
+  const trip = 'day token limit: 2 of 1 work tokens used';
+  let d;
+  for (let i = 0; i < 3; i++) d = b.tick([{ agentId: 'a', sample: null, progressing: true, limitTrip: trip }], T0 + i * BEAT)[0];
+  assert.equal(d.state.level, 'stopped');
+  assert.equal(d.action, 'stop');
+});
+
+test('limitTrip is ignored when the breaker is disabled', () => {
+  const b = makeBreaker({ enabled: false });
+  const d = b.tick([{ agentId: 'a', sample: null, progressing: true, limitTrip: 'x' }], T0)[0];
+  assert.equal(d.state.level, 'healthy');
+});
+
 process.exit(failures ? 1 : 0);

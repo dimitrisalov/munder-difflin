@@ -280,7 +280,8 @@ const STRINGS = {
       '',
       '/status — кто из агентов чем занят',
       '/tasks — открытые задачи',
-      '/asks — вопросы, которые ждут твоего ответа'
+      '/asks — вопросы, которые ждут твоего ответа',
+      '/limits — расход токенов за 5 часов, сутки, неделю и месяц'
     ].join('\n'),
     accepted: (taskId) => `Принято, передал Michael. Задача ${taskId}.`,
     acceptedFollowUp: (taskId) => `Принято, передал Michael как продолжение задачи ${taskId}.`,
@@ -298,7 +299,19 @@ const STRINGS = {
     counts: (c) => `Канбан: к работе ${c.todo}, в работе ${c.doing}, ждут ${c.blocked}, готово ${c.done}`,
     agentStatus: { idle: 'свободен', working: 'работает', blocked: 'ждёт', gone: 'нет на месте' },
     taskStatus: { todo: 'к работе', doing: 'в работе', blocked: 'ждёт', done: 'готово' },
-    filesFailed: (n) => `Не удалось скачать вложений: ${n}. Задача ушла без них.`
+    filesFailed: (n) => `Не удалось скачать вложений: ${n}. Задача ушла без них.`,
+    periods: { '5h': 'за 5 часов', day: 'за сутки', week: 'за неделю', month: 'за 30 дней' },
+    office: 'Офис',
+    agent: (name) => `Агент ${name}`,
+    limitWarn: (pct) => `⚠️ <b>Лимит токенов: ${pct}%</b>`,
+    limitOver: '⛔ <b>Лимит токенов исчерпан</b>',
+    limitOverNote: 'Агенты притормозены, пока скользящее окно не освободится.',
+    of: 'из',
+    million: 'млн',
+    thousand: 'тыс.',
+    limitsHead: 'Расход токенов (работа агентов, без повторного чтения кэша):',
+    noLimits: 'Лимиты не заданы. Их можно задать в Settings → Autonomy & Budgets.',
+    limitsAgents: 'Лимиты агентов:'
   },
   en: {
     paired: (name) => `Done, ${name}: this bot is now paired to you. Send tasks for the office right here.\n\n/help — what I can do.`,
@@ -312,7 +325,8 @@ const STRINGS = {
       '',
       '/status — what each agent is doing',
       '/tasks — open tasks',
-      '/asks — questions waiting for your answer'
+      '/asks — questions waiting for your answer',
+      '/limits — token use over 5 hours, a day, a week and a month'
     ].join('\n'),
     accepted: (taskId) => `Got it, passed to Michael. Task ${taskId}.`,
     acceptedFollowUp: (taskId) => `Got it, passed to Michael as a follow-up to task ${taskId}.`,
@@ -330,7 +344,19 @@ const STRINGS = {
     counts: (c) => `Board: todo ${c.todo}, doing ${c.doing}, blocked ${c.blocked}, done ${c.done}`,
     agentStatus: { idle: 'idle', working: 'working', blocked: 'blocked', gone: 'away' },
     taskStatus: { todo: 'todo', doing: 'doing', blocked: 'blocked', done: 'done' },
-    filesFailed: (n) => `Could not download ${n} attachment(s). The task went without them.`
+    filesFailed: (n) => `Could not download ${n} attachment(s). The task went without them.`,
+    periods: { '5h': 'in 5 hours', day: 'in a day', week: 'in a week', month: 'in 30 days' },
+    office: 'Office',
+    agent: (name) => `Agent ${name}`,
+    limitWarn: (pct) => `⚠️ <b>Token limit: ${pct}%</b>`,
+    limitOver: '⛔ <b>Token limit reached</b>',
+    limitOverNote: 'Agents are held back until the rolling window frees up.',
+    of: 'of',
+    million: 'M',
+    thousand: 'k',
+    limitsHead: 'Token use (agents\' work, cache re-reads excluded):',
+    noLimits: 'No limits set. Set them in Settings → Autonomy & Budgets.',
+    limitsAgents: 'Agent limits:'
   }
 };
 
@@ -387,6 +413,67 @@ function formatTasks(tasks, lang, limit = 15) {
   return lines.join('\n');
 }
 
+/** 1 234 567 → "1,2 млн" / "1.2M"; 850 000 → "850 тыс." / "850k". */
+function fmtTokens(n, lang) {
+  const S = strings(lang);
+  const v = Number(n) || 0;
+  const dec = lang === 'en' ? '.' : ',';
+  if (v >= 1e6) return `${(Math.round(v / 1e5) / 10).toString().replace('.', dec)} ${S.million}`.replace(' M', 'M');
+  if (v >= 1e3) return `${Math.round(v / 1e3)} ${S.thousand}`.replace(' k', 'k');
+  return String(Math.round(v));
+}
+
+const PERIOD_ORDER = ['5h', 'day', 'week', 'month'];
+
+/**
+ * A limit crossing, as Telegram HTML.
+ * @param item  - { scope: 'office'|'agent', name?, period, used, limit }
+ * @param level - 'warn' (between warnAt and 100%) or 'over' (100% or more)
+ */
+function formatLimitAlert(item, level, lang) {
+  const S = strings(lang);
+  const who = item.scope === 'office' ? S.office : S.agent(escapeHtml(item.name || item.agentId || '?'));
+  const pct = item.limit > 0 ? Math.floor((item.used / item.limit) * 100) : 0;
+  const line = `${who} ${S.periods[item.period] || item.period}: ${fmtTokens(item.used, lang)} ${S.of} ${fmtTokens(item.limit, lang)}`;
+  return level === 'over'
+    ? `${S.limitOver}\n${line}\n${S.limitOverNote}`
+    : `${S.limitWarn(pct)}\n${line}`;
+}
+
+/**
+ * `/limits`: office use per period against its limits, plus agents with limits.
+ * @param status - { config?: { office?, agents? }, usage: { [period]: { floor: {work}, agents: { [id]: {work} } } }, names?: { [id]: string } }
+ */
+function formatLimits(status, lang) {
+  const S = strings(lang);
+  const cfg = (status && status.config) || {};
+  const usage = (status && status.usage) || {};
+  const names = (status && status.names) || {};
+  const lines = [S.limitsHead];
+  for (const p of PERIOD_ORDER) {
+    const used = usage[p] && usage[p].floor ? usage[p].floor.work : 0;
+    const limit = cfg.office && cfg.office[p];
+    const pct = limit ? ` (${Math.floor((used / limit) * 100)}%)` : '';
+    lines.push(`• ${S.periods[p]}: ${fmtTokens(used, lang)}${limit ? ` ${S.of} ${fmtTokens(limit, lang)}${pct}` : ''}`);
+  }
+  const agentIds = Object.keys(cfg.agents || {});
+  if (agentIds.length > 0) {
+    lines.push('', S.limitsAgents);
+    for (const id of agentIds) {
+      const parts = [];
+      for (const p of PERIOD_ORDER) {
+        const limit = cfg.agents[id][p];
+        if (!limit) continue;
+        const used = usage[p] && usage[p].agents && usage[p].agents[id] ? usage[p].agents[id].work : 0;
+        parts.push(`${S.periods[p]} ${fmtTokens(used, lang)} ${S.of} ${fmtTokens(limit, lang)}`);
+      }
+      if (parts.length) lines.push(`• <b>${escapeHtml(names[id] || id)}</b>: ${parts.join('; ')}`);
+    }
+  }
+  if (!cfg.office && agentIds.length === 0) lines.push('', S.noLimits);
+  return lines.join('\n');
+}
+
 /**
  * The god's working instruction for a Telegram-origin request. The owner reads
  * replies on a phone, so they are told to keep answers short and to post the
@@ -435,5 +522,8 @@ module.exports = {
   formatAsk,
   formatStatus,
   formatTasks,
+  fmtTokens,
+  formatLimitAlert,
+  formatLimits,
   buildRequestProtocol
 };

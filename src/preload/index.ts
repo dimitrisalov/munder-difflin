@@ -150,6 +150,27 @@ export interface HumanQA {
   dismissedAt?: string;
 }
 
+/** Token limits per rolling period (mirrors main/periodLimits.ts). */
+export type LimitPeriod = '5h' | 'day' | 'week' | 'month';
+export type PeriodLimitSet = Partial<Record<LimitPeriod, number>>;
+export interface PeriodLimitsConfig {
+  office?: PeriodLimitSet;
+  agents?: Record<string, PeriodLimitSet>;
+  warnAt?: number;
+}
+/** Usage per period as `limits:get` reports it (work + total tokens). */
+export interface PeriodUsageSnapshot {
+  floor: { work: number; total: number };
+  agents: Record<string, { work: number; total: number }>;
+}
+export interface LimitsStatus {
+  ready: boolean;
+  config: PeriodLimitsConfig;
+  usage: Record<LimitPeriod, PeriodUsageSnapshot>;
+  breakerEnabled: boolean;
+  hardStop: boolean;
+}
+
 /** Telegram integration state as Settings sees it — never carries the token. */
 export interface TelegramStatus {
   enabled: boolean;
@@ -330,6 +351,7 @@ export interface HarnessConfig {
   costCapUsd?: number;
   costCapTokens?: number;
   agentTokenCaps?: Record<string, number>;
+  periodLimits?: PeriodLimitsConfig;
   autoDeliveryPausedAgents?: string[];
   maxTurns?: number;
   circuitBreaker?: CircuitBreakerConfig;
@@ -1189,6 +1211,14 @@ const api = {
     proactivePosting?: boolean;
   }): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('slack:setConfig', patch),
+
+  // ─── Token limits per period ─────────────────────────────────────────────────
+  /** Current limits, usage per rolling window and breaker posture. */
+  limitsGet: (): Promise<LimitsStatus> =>
+    ipcRenderer.invoke('limits:get'),
+  /** Replace the limits (sanitized in main). Empty object clears them all. */
+  limitsSet: (limits: PeriodLimitsConfig): Promise<LimitsStatus> =>
+    ipcRenderer.invoke('limits:set', limits),
 
   // ─── Telegram integration (the owner's phone ↔ the orchestrator) ─────────────
   // The token goes in through telegramSetToken and never comes back out: status

@@ -25,6 +25,15 @@ export {
   type AgentProvider
 };
 
+/** Token limits per rolling period (mirrors main/periodLimits.ts). */
+export type LimitPeriod = '5h' | 'day' | 'week' | 'month';
+export type PeriodLimitSet = Partial<Record<LimitPeriod, number>>;
+export interface PeriodLimitsConfig {
+  office?: PeriodLimitSet;
+  agents?: Record<string, PeriodLimitSet>;
+  warnAt?: number;
+}
+
 /** A recurring auto-dispatched mission (mirrors src/main/config.ts). */
 export interface ScheduledMission {
   id: string;
@@ -116,6 +125,8 @@ export interface HarnessConfig {
   /** Per-agent total-token ceiling, keyed by agent id. Overrides the floor budget
    *  for that agent's meter and trips the breaker for it alone. */
   agentTokenCaps?: Record<string, number>;
+  /** Token limits per rolling period for the office and per agent (work tokens). */
+  periodLimits?: PeriodLimitsConfig;
   autoDeliveryPausedAgents?: string[];
   maxTurns?: number;
   circuitBreaker?: CircuitBreakerConfig;

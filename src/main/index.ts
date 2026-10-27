@@ -37,6 +37,7 @@ import { readAgentUsage, readContextTokens, seedSessionTranscript, resolveSessio
 import { listIssues, listCIRuns } from './github';
 import { SlackWebhookServer, SlackReplyServer, postSlackReply, type SlackEventFile } from './slack';
 import { TelegramBot, TelegramReplyServer, sendTelegramText, downloadTelegramFile, type TelegramDecision } from './telegram';
+import { PeriodLimitTracker, periodCore, type LimitItem } from './periodLimits';
 import {
   WebhookServer,
   type WebhookDispatch, type WebhookEndpointRef, type WebhookInbound, type WebhookTaskStatus
@@ -1192,6 +1193,40 @@ function breakerToast(title: string, body: string): void {
   catch { /* unsupported platform */ }
 }
 
+/** Token limits per period: the incremental ledger fold behind the breaker's
+ *  `limitTrip` input, `/limits` in Telegram and the Settings usage bars. */
+const periodTracker = new PeriodLimitTracker();
+/** alertKey → when it was last announced. A condition that clears is dropped,
+ *  so the next crossing announces again; one that holds is re-announced at
+ *  most every LIMIT_RENOTIFY_MS. */
+const limitAlerts = new Map<string, number>();
+const LIMIT_RENOTIFY_MS = 6 * 60 * 60 * 1000;
+
+/** Tell the owner about limits nearing or reaching their ceiling: Telegram
+ *  (when paired) for both, a native toast for an overrun. Never throws. */
+function notifyPeriodLimits(r: { warnings: LimitItem[]; over: LimitItem[] }, names: Record<string, string>): void {
+  const now = Date.now();
+  const live = new Set<string>();
+  const items: Array<[LimitItem, 'warn' | 'over']> = [
+    ...r.over.map((i): [LimitItem, 'over'] => [i, 'over']),
+    ...r.warnings.map((i): [LimitItem, 'warn'] => [i, 'warn'])
+  ];
+  const lang = telegramSettings().lang ?? 'ru';
+  for (const [item, level] of items) {
+    const key = periodCore.alertKey(item, level);
+    live.add(key);
+    const last = limitAlerts.get(key);
+    if (last !== undefined && now - last < LIMIT_RENOTIFY_MS) continue;
+    limitAlerts.set(key, now);
+    const name = item.agentId ? (names[item.agentId] ?? item.agentId) : undefined;
+    void telegramSendToOwner(tgCore.formatLimitAlert({ ...item, name }, level, lang)).catch(() => { /* best-effort */ });
+    if (level === 'over') {
+      breakerToast('Token limit reached', `${item.scope === 'office' ? 'Office' : name} — ${item.period}: ${item.used.toLocaleString('en-US')} of ${item.limit.toLocaleString('en-US')} work tokens`);
+    }
+  }
+  for (const key of [...limitAlerts.keys()]) if (!live.has(key)) limitAlerts.delete(key);
+}
+
 /** One circuit-breaker beat: pull a fresh usage sample per active agent, append
  *  it to the durable cost ledger (the SOLE durable cost store), tick the breaker,
  *  emit each BreakerState on control:breakerState (Seam 2), and enforce any
@@ -1257,6 +1292,18 @@ function runBreakerBeat(progressWindowMs: number): void {
       lastWorkAt: lastWorkAt(id)
     });
   }
+  // Token limits per period: fold what the ledger gained (async, incremental)
+  // and apply the verdict of the last completed pass — at most one beat behind,
+  // never a stall. The orchestrator is not an input, but its usage still counts
+  // toward the office total.
+  const ledgerRoot = hive.root();
+  if (ledgerRoot) void periodTracker.refresh(join(ledgerRoot, 'cost-ledger.jsonl'));
+  const periodVerdict = periodTracker.evaluate(readConfig().periodLimits, inputs.map((i) => i.agentId), now);
+  for (const input of inputs) {
+    const trip = periodVerdict.trips.get(input.agentId);
+    if (trip) input.limitTrip = trip;
+  }
+  notifyPeriodLimits(periodVerdict, Object.fromEntries(Object.entries(reg.agents).map(([id, a]) => [id, a.name ?? id])));
   for (const d of breaker.tick(inputs, now)) {
     try { liveWebContents()?.send('control:breakerState', d.state); } catch { /* window gone */ }
     if (d.action === 'none') continue;
@@ -1817,6 +1864,8 @@ const tgCore = require('./telegram-core.cjs') as {
   buildRequestProtocol: (o: { nodeCommand: string; helperPath: string; messageId: number; taskId: string }) => string;
   escapeHtml: (s: string) => string;
   truncate: (s: string, n: number) => string;
+  formatLimitAlert: (item: LimitItem & { name?: string }, level: 'warn' | 'over', lang: string) => string;
+  formatLimits: (status: { config: unknown; usage: unknown; names: Record<string, string> }, lang: string) => string;
 };
 
 /** A pairing code is good for this long after Settings issues it. */
@@ -2016,6 +2065,13 @@ async function handleTelegramCommand(cmd: string, messageId: number, lang: strin
       if (!hive.enabled()) { await telegramSendToOwner(S.hiveOff, messageId); return; }
       await telegramSendToOwner(tgCore.formatTasks(hiveTaskList(), lang), messageId);
       return;
+    case 'limits': {
+      const names = hive.enabled()
+        ? Object.fromEntries(Object.entries(hive.registry().agents).map(([id, a]) => [id, a.name ?? id]))
+        : {};
+      await telegramSendToOwner(tgCore.formatLimits({ config: readConfig().periodLimits, usage: periodTracker.snapshot(), names }, lang), messageId);
+      return;
+    }
     case 'asks': {
       // Re-send every open question, even ones already delivered once.
       const asks = tgCore.openAsks(hiveTaskList());
@@ -4674,6 +4730,31 @@ ipcMain.handle('telegram:setLanguage', (_evt, lang: unknown) => {
   if (lang === 'ru' || lang === 'en') writeTelegramSettings({ lang });
   notifyTelegramState();
   return telegramStatus();
+});
+
+// ─── IPC: token limits per period ───────────────────────────────────────────
+function limitsStatus() {
+  const cfg = readConfig();
+  return {
+    ready: periodTracker.ready,
+    config: cfg.periodLimits ?? {},
+    usage: periodTracker.snapshot(),
+    breakerEnabled: cfg.circuitBreaker?.enabled ?? true,
+    hardStop: cfg.circuitBreaker?.hardStop ?? false
+  };
+}
+ipcMain.handle('limits:get', async () => {
+  const root = hive.root();
+  if (root) await periodTracker.refresh(join(root, 'cost-ledger.jsonl'));
+  return limitsStatus();
+});
+/** Main-side write so a renderer snapshot can never drop limits set elsewhere;
+ *  the value is sanitized (positive whole tokens, known periods only). */
+ipcMain.handle('limits:set', (_evt, raw: unknown) => {
+  const next = periodCore.sanitizeLimits(raw);
+  writeConfig({ periodLimits: Object.keys(next).length > 0 ? next : undefined });
+  limitAlerts.clear();
+  return limitsStatus();
 });
 
 // ─── IPC: Triggers — context (auto-compact / auto-clear) ────────────────────
