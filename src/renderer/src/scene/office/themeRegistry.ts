@@ -28,11 +28,16 @@ import interiorsUrl from '@/assets/tilesets/interiors.png?url';
 // .tmj is Tiled JSON; imported as raw text and parsed by the loader.
 import officeMapRaw from '@/assets/maps/office.tmj?raw';
 import brooklyn99MapRaw from '@/assets/maps/brooklyn99.tmj?raw';
+import { LOFT_LAYOUT } from '@/assets/maps/loft.layout';
+import { buildMap } from './mapBuild';
+import { FURNITURE } from './furniture';
+import { seatZoneFor, type SeatAgent } from './seatZones';
 
 /** Theme identifiers. Only `office` exists in Phase 0; the five TV-show themes
  *  (friends, brooklyn99, siliconvalley, got, hogwarts) land in later phases. */
 export type ThemeId =
   | 'office'
+  | 'loft'
   | 'friends'
   | 'brooklyn99'
   | 'siliconvalley'
@@ -100,6 +105,8 @@ export interface AnchorConfig {
   calendar: Tile;
   boards: Tile;
   clock: Tile;
+  /** The ASK ME board (questions waiting on the human). Unset = the office's spot. */
+  ask?: Tile;
 }
 
 /** Theme palette. `background` is the canvas clear color; `noteColors` are the
@@ -137,6 +144,9 @@ export interface ThemeConfig {
   monitor: MonitorConfig;
   palette: PaletteConfig;
   cast: ThemeCast;
+  /** Zoned maps: the zone an agent's desk should be in (seats are named
+   *  `<zone>-seat-N`). Unset = desks are claimed in order. */
+  seatZoneFor?: (agent: SeatAgent) => string | undefined;
 }
 
 /** The existing office, expressed as a theme. Values are copied verbatim from
@@ -285,10 +295,68 @@ export const BROOKLYN99_THEME: ThemeConfig = {
   cast: OFFICE_THEME.cast,
 };
 
+/** The loft (wave 7): the owner's own office, built at load from a readable
+ *  layout (assets/maps/loft.layout.ts) rather than a hand-painted .tmj, so a
+ *  room's contents change with a one-line edit. Same tiles, monitor and cast as
+ *  the office; desks are zoned by department (seatZones.ts). */
+const loftBuild = buildMap(LOFT_LAYOUT, FURNITURE, (JSON.parse(officeMapRaw) as { tilesets: unknown[] }).tilesets);
+if (loftBuild.problems.length) console.warn('[loft] layout problems:', loftBuild.problems);
+
+export const LOFT_THEME: ThemeConfig = {
+  id: 'loft',
+  mapRaw: JSON.stringify(loftBuild.map),
+  tilesets: OFFICE_THEME.tilesets,
+  // The boss's chair first, then every department desk; the lounge's gaming
+  // seat is not a desk.
+  primarySeatNames: ['desk-ceo', ...loftBuild.seats.map((s) => s.name).filter((n) => /^(library|studio|dev|guests)-seat-/.test(n))],
+  cafeSeatNames: ['cafe-seat-1', 'cafe-seat-2', 'cafe-seat-3', 'cafe-seat-4'],
+  cafeStands: [
+    ['cafe-stand-coffee', 'coffee'],
+    ['cafe-stand-vending', 'vending'],
+  ],
+  coffee: {
+    trayTile: { x: 28, y: 21 },     // the counter's middle
+    trayStand: { x: 28, y: 23 },
+    machineStand: { x: 27, y: 23 }, // below the coffee machine end
+    sinkTile: { x: 29, y: 21 },     // the counter's right end
+    sinkStand: { x: 29, y: 23 },
+    maxCups: 4,
+  },
+  anchors: {
+    calendar: { x: 33, y: 1 },  // Theo's wall, beside his window
+    boards: { x: 23, y: 2 },    // the task board on the top wall, past the library
+    clock: { x: 30, y: 1 },     // left of his window; clicking it is clocking out
+    ask: { x: 35, y: 10 },      // on the wall under Theo's office, right of his door
+  },
+  errandSpots: [
+    // plants
+    { kind: 'water', stand: { x: 21, y: 6 }, facing: 'right', fx: { x: 22, y: 6 }, duration: 4.5 },
+    { kind: 'water', stand: { x: 11, y: 13 }, facing: 'up', fx: { x: 11, y: 12 }, duration: 4.5 },
+    { kind: 'water', stand: { x: 20, y: 13 }, facing: 'right', fx: { x: 21, y: 13 }, duration: 4.5 },
+    { kind: 'water', stand: { x: 11, y: 20 }, facing: 'up', fx: { x: 11, y: 19 }, duration: 4.5 },
+    { kind: 'water', stand: { x: 21, y: 20 }, facing: 'right', fx: { x: 22, y: 20 }, duration: 4.5 },
+    // Theo's office: his plant and the cigar at his window
+    { kind: 'water', stand: { x: 37, y: 3 }, facing: 'right', fx: { x: 38, y: 3 }, duration: 4.5, godOnly: true },
+    { kind: 'smoke', stand: { x: 31, y: 3 }, facing: 'up', fx: { x: 31, y: 1 }, duration: 18, godOnly: true },
+    // the library's shelves
+    { kind: 'shelf', stand: { x: 10, y: 4 }, facing: 'up', fx: { x: 9, y: 2 }, duration: 4 },
+    { kind: 'shelf', stand: { x: 16, y: 4 }, facing: 'up', fx: { x: 15, y: 2 }, duration: 4 },
+    // kitchen: water cooler, fridge, bin
+    { kind: 'dispenser', stand: { x: 34, y: 22 }, facing: 'right', fx: { x: 35, y: 21 }, duration: 3.5 },
+    { kind: 'fridge', stand: { x: 31, y: 22 }, facing: 'up', fx: { x: 31, y: 21 }, duration: 3.2 },
+    { kind: 'bin', stand: { x: 37, y: 24 }, facing: 'right', fx: { x: 38, y: 23 }, duration: 2.6 },
+  ],
+  monitor: OFFICE_THEME.monitor,
+  palette: OFFICE_THEME.palette,
+  cast: OFFICE_THEME.cast,
+  seatZoneFor,
+};
+
 /** All registered themes. Phase 0 ships only the office; show themes register
  *  here as their content lands (Phase 2). */
 export const THEMES: Partial<Record<ThemeId, ThemeConfig>> = {
   office: OFFICE_THEME,
+  loft: LOFT_THEME,
   brooklyn99: BROOKLYN99_THEME,
 };
 

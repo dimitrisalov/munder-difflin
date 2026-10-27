@@ -11,6 +11,7 @@ import { DeskScreen } from './DeskScreen';
 import { MessageEnvelope, type MessageAct } from './MessageEnvelope';
 import { hexToNumber, DEFAULT_CHARACTER } from './cast';
 import { pickSoloLine, pickExchange, type BreakSpot } from './cafeteriaLines';
+import { freeSeatInZone } from './seatZones';
 import { colors } from '@/design/tokens';
 import { loadTheme, resolveThemeMap, themeTilesetUrls } from './themeLoader';
 import {
@@ -333,15 +334,19 @@ export function OfficeFloor() {
       // conference-room chairs as overflow. Each agent claims one and stays there;
       // they never wander off it (except when blocked, or on a coffee break).
       const seatTiles: Tile[] = [];
+      // The spawn-point name behind each seat (null for overflow), so a zoned
+      // map can give an agent a desk in its department (seatZones.ts).
+      const seatNames: (string | null)[] = [];
       const seatSeen = new Set<string>();
-      const addSeat = (t?: Tile) => {
+      const addSeat = (t?: Tile, name?: string) => {
         if (!t) return;
         const k = `${t.x},${t.y}`;
         if (seatSeen.has(k)) return;
         seatSeen.add(k);
         seatTiles.push({ x: t.x, y: t.y });
+        seatNames.push(name ?? null);
       };
-      for (const name of theme.primarySeatNames) addSeat(mapRenderer.getSpawnPoint(name));
+      for (const name of theme.primarySeatNames) addSeat(mapRenderer.getSpawnPoint(name), name);
       const addZoneSeats = (zone: string) => {
         const z = mapRenderer.getZone(zone);
         if (!z) return;
@@ -380,6 +385,11 @@ export function OfficeFloor() {
       const GOD_SEAT = 0;
       const claimSeat = (agent: Agent): number | null => {
         if (agent.isGod) { seatClaims.add(GOD_SEAT); return GOD_SEAT; }
+        const zone = theme.seatZoneFor?.({ id: agent.id, name: agent.name, description: agent.description });
+        if (zone) {
+          const i = freeSeatInZone(zone, seatNames, seatClaims);
+          if (i > 0) { seatClaims.add(i); return i; }
+        }
         for (let i = 1; i < seatTiles.length; i++) {
           if (!seatClaims.has(i)) { seatClaims.add(i); return i; }
         }
@@ -1140,8 +1150,9 @@ export function OfficeFloor() {
       const askG = new Graphics();
       askG.eventMode = 'static';
       askG.cursor = 'pointer';
-      askG.position.set(14 * tsB + 25, 10 * tsB);
-      askG.zIndex = 11 * tsB;
+      const askTile: Tile = theme.anchors.ask ?? { x: 14, y: 10 };
+      askG.position.set(askTile.x * tsB + 25, askTile.y * tsB);
+      askG.zIndex = (askTile.y + 1) * tsB;
       askG.on('pointertap', (ev) => {
         ev.stopPropagation();
         const st = useStore.getState();

@@ -466,6 +466,12 @@
       "reason_daily": "每日",
       "reason_manual": "手动",
       "reason_before-restore": "恢复前"
+    },
+    "officeMap": {
+      "title": "办公室地图",
+      "desc": "经典办公室，或 loft：一个大厅，有图书区、工作室、开发角、休息区和厨房，按部门安排座位。所有代理都会保留，只是换了座位。",
+      "classic": "经典",
+      "loft": "loft"
     }
   },
   "commandCenter": {

@@ -466,6 +466,12 @@
       "reason_daily": "daily",
       "reason_manual": "by hand",
       "reason_before-restore": "before a restore"
+    },
+    "officeMap": {
+      "title": "Office map",
+      "desc": "The classic office, or the loft: one big hall with a library, studio, dev corner, lounge and kitchen, and desks by department. Everyone stays; they just take new desks.",
+      "classic": "classic",
+      "loft": "loft"
     }
   },
   "commandCenter": {

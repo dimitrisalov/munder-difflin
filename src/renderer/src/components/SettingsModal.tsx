@@ -27,6 +27,7 @@ import { WorkSwitchSettings } from './WorkSwitchSettings';
 import { TempsSettings } from './TempsSettings';
 import { BackupsSettings } from './BackupsSettings';
 import { WatchdogSettings } from './WatchdogSettings';
+import { OfficeMapPicker } from './OfficeMapPicker';
 import { IntegrationsStatus } from './IntegrationsStatus';
 import { PanelSettings } from './PanelSettings';
 import { REALTIME_MODEL } from '@shared/realtimePricing';
@@ -1189,6 +1190,9 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
                           </PixelButton>
                         </div>
                       </div>
+
+                      {/* Office map — classic or the loft (wave 7) */}
+                      <OfficeMapPicker config={config} />
 
                       {/* Office Theme — TV-show office maps (experimental; flag tvShowOffices, default off) */}
                       <OfficeThemePicker config={config} />

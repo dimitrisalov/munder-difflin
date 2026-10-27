@@ -45,7 +45,7 @@ export function OfficeThemePicker({ config }: { config: HarnessConfig }) {
       await window.cth.updateConfig({ tvShowOffices: next });
       // Flag off → the office renders regardless of the saved theme; flag on →
       // restore the persisted theme.
-      setOfficeTheme(next ? current : 'office');
+      setOfficeTheme(next ? current : (config.officeMap === 'loft' ? 'loft' : 'office'));
     } catch {
       setEnabled(!next); // revert optimistic toggle on failure
     }
@@ -76,7 +76,8 @@ export function OfficeThemePicker({ config }: { config: HarnessConfig }) {
         }
       }
       for (const a of victims) archiveAgent(a.id);
-      await window.cth.updateConfig({ officeTheme: id });
+      // Only the TV-show ids are offered here; the loft is chosen in OfficeMapPicker.
+      await window.cth.updateConfig({ officeTheme: id as NonNullable<HarnessConfig['officeTheme']> });
       setCurrent(id);
       setOfficeTheme(id); // → OfficeFloor rebuilds the scene on the new map/cast
       const meta = THEME_META.find((t) => t.id === id);
