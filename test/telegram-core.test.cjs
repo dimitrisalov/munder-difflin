@@ -235,3 +235,55 @@ test('formatLimits: office periods with and without limits, agents by name, hint
   const none = core.formatLimits({ config: {}, usage }, 'ru');
   assert.match(none, /Лимиты не заданы/);
 });
+
+test('extractVoice: voice notes, audio files and round video notes', () => {
+  assert.deepEqual(core.extractVoice({ voice: { file_id: 'v', duration: 3, mime_type: 'audio/ogg', file_size: 9000 } }),
+    { file_id: 'v', name: 'voice.ogg', mime: 'audio/ogg', size: 9000, duration: 3 });
+  assert.equal(core.extractVoice({ audio: { file_id: 'a', file_name: 'memo.m4a', mime_type: 'audio/mp4' } }).name, 'memo.m4a');
+  assert.equal(core.extractVoice({ video_note: { file_id: 'n' } }).mime, 'video/mp4');
+  assert.equal(core.extractVoice({ text: 'hi' }), null);
+});
+
+test('a voice-only message from the owner is a message with a voice and no text', () => {
+  const d = core.classifyUpdate(update(OWNER, undefined, { voice: { file_id: 'v1', duration: 4 } }), OWNER, null);
+  assert.equal(d.kind, 'message');
+  assert.equal(d.text, '');
+  assert.equal(d.voice.file_id, 'v1');
+});
+
+test('button presses: owner only, private chat, our data format only', () => {
+  const press = (fromId, data, chatType = 'private') => ({
+    update_id: 9,
+    callback_query: { id: 'cb', data, from: { id: fromId }, message: { message_id: 77, chat: { id: fromId, type: chatType } } }
+  });
+  const ok = core.classifyUpdate(press(OWNER, 'a:abcdef1234:2'), OWNER, null);
+  assert.deepEqual(ok, { kind: 'callback', callbackId: 'cb', chatId: OWNER, messageId: 77, action: 'answer', key: 'abcdef1234', option: 2 });
+  assert.equal(core.classifyUpdate(press(OWNER, 'd:abcdef1234'), OWNER, null).action, 'dismiss');
+  assert.equal(core.classifyUpdate(press(STRANGER, 'a:abcdef1234:1'), OWNER, null).kind, 'ignore');
+  assert.equal(core.classifyUpdate(press(OWNER, 'a:abcdef1234:1', 'group'), OWNER, null).kind, 'ignore');
+  assert.equal(core.classifyUpdate(press(OWNER, 'rm -rf'), OWNER, null).kind, 'ignore');
+});
+
+test('parseOptions: numbered lines become options, markdown stripped, need at least two', () => {
+  assert.deepEqual(core.parseOptions('**Publish?**\n\n1. Yes, now\n2) Wait for `Monday`\n- not an option'), ['Yes, now', 'Wait for Monday']);
+  assert.deepEqual(core.parseOptions('1. Only one'), []);
+  assert.equal(core.parseOptions(Array.from({ length: 12 }, (_, i) => `${i + 1}. o${i}`).join('\n')).length, 8);
+});
+
+test('askKeyboard: one button per option plus dismiss, data fits Telegram limits', () => {
+  const key = core.askShortKey({ taskId: 't1', q: 'q?', askedAt: '2026-10-27T10:00:00Z' });
+  assert.match(key, /^[0-9a-f]{10}$/);
+  const kb = core.askKeyboard(key, ['Yes', 'x'.repeat(200)], 'en');
+  assert.equal(kb.inline_keyboard.length, 3);
+  assert.equal(kb.inline_keyboard[0][0].callback_data, `a:${key}:1`);
+  assert.ok(kb.inline_keyboard[1][0].text.length <= 60);
+  assert.equal(kb.inline_keyboard[2][0].callback_data, `d:${key}`);
+  for (const row of kb.inline_keyboard) assert.ok(Buffer.byteLength(row[0].callback_data) <= 64);
+  assert.deepEqual(core.parseCallbackData(kb.inline_keyboard[0][0].callback_data), { action: 'answer', key, option: 1 });
+});
+
+test('the request protocol tells agents about files and one-tap options', () => {
+  const p = core.buildRequestProtocol({ nodeCommand: 'node', helperPath: 'h.cjs', messageId: 1, taskId: 't' });
+  assert.match(p, /--file <absolute path>/);
+  assert.match(p, /one tap buttons/);
+});

@@ -36,7 +36,11 @@ import { PersistStore } from './db';
 import { readAgentUsage, readContextTokens, seedSessionTranscript, resolveSessionCwd } from './transcript';
 import { listIssues, listCIRuns } from './github';
 import { SlackWebhookServer, SlackReplyServer, postSlackReply, type SlackEventFile } from './slack';
-import { TelegramBot, TelegramReplyServer, sendTelegramText, downloadTelegramFile, type TelegramDecision } from './telegram';
+import {
+  TelegramBot, TelegramReplyServer, sendTelegramText, downloadTelegramFile, answerCallback, editReplyMarkup,
+  type TelegramDecision
+} from './telegram';
+import { transcribeVoice, resolveEngine, validLocalUrl, type VoiceSettings, type TranscribeEngine } from './transcribe';
 import { PeriodLimitTracker, periodCore, type LimitItem } from './periodLimits';
 import {
   WebhookServer,
@@ -1839,6 +1843,11 @@ interface TelegramLedger {
 }
 interface TelegramStrings {
   paired: (name: string) => string;
+  answerPicked: (n: number) => string;
+  dismissed: string;
+  heard: (t: string) => string;
+  voiceOff: string;
+  voiceFailed: (e: string) => string;
   help: string;
   accepted: (taskId: string) => string;
   acceptedFollowUp: (taskId: string) => string;
@@ -1866,6 +1875,9 @@ const tgCore = require('./telegram-core.cjs') as {
   truncate: (s: string, n: number) => string;
   formatLimitAlert: (item: LimitItem & { name?: string }, level: 'warn' | 'over', lang: string) => string;
   formatLimits: (status: { config: unknown; usage: unknown; names: Record<string, string> }, lang: string) => string;
+  parseOptions: (q: string) => string[];
+  askShortKey: (ask: TelegramAsk) => string;
+  askKeyboard: (shortKey: string, options: string[], lang: string) => unknown;
 };
 
 /** A pairing code is good for this long after Settings issues it. */
@@ -1883,13 +1895,20 @@ interface TelegramSettings {
   pairingCode?: string;
   pairingIssuedAt?: number;
   lang?: 'ru' | 'en';
+  /** How voice notes are transcribed (transcribe.ts). */
+  voice?: VoiceSettings;
 }
+
+/** What a button on a forwarded question refers to (telegram-core askKeyboard). */
+interface TelegramAskButtons { taskId: string; q: string; options: string[] }
 
 interface TelegramRuntime {
   offset?: number;
   ledger?: unknown;
   asksNotified?: string[];
   doneNotified?: string[];
+  /** askShortKey → the ask its buttons answer. Bounded, oldest dropped. */
+  askButtons?: Record<string, TelegramAskButtons>;
 }
 
 interface TelegramStatus {
@@ -1903,6 +1922,11 @@ interface TelegramStatus {
   pairingLink?: string;
   lang: 'ru' | 'en';
   error?: string;
+  voiceEngine: TranscribeEngine;
+  voiceLocalUrl?: string;
+  voiceLanguage?: string;
+  /** The engine that would run right now, or null when voice notes cannot be transcribed. */
+  voiceActive: 'local' | 'groq' | null;
 }
 
 let telegramBot: TelegramBot | null = null;
@@ -1973,7 +1997,11 @@ function telegramStatus(): TelegramStatus {
     // Tapping this on the phone opens the bot and sends `/start <code>` for you.
     pairingLink: code && s.botUsername ? `https://t.me/${s.botUsername}?start=${code}` : undefined,
     lang: s.lang ?? 'ru',
-    error: telegramLastError
+    error: telegramLastError,
+    voiceEngine: s.voice?.engine ?? 'auto',
+    voiceLocalUrl: s.voice?.localUrl,
+    voiceLanguage: s.voice?.language,
+    voiceActive: resolveEngine(s.voice, readConfig().groqApiKey)
   };
 }
 
@@ -1999,10 +2027,10 @@ function cappedIds(set: Set<string>): string[] {
 }
 
 /** Send Telegram HTML to the paired owner. Returns the sent message ids. */
-async function telegramSendToOwner(html: string, replyTo?: number): Promise<number[]> {
+async function telegramSendToOwner(html: string, replyTo?: number, replyMarkup?: unknown): Promise<number[]> {
   const s = telegramSettings();
   if (!s.botToken || s.ownerChatId === undefined) return [];
-  const r = await sendTelegramText({ token: s.botToken, chatId: s.ownerChatId, text: html, html: true, replyTo });
+  const r = await sendTelegramText({ token: s.botToken, chatId: s.ownerChatId, text: html, html: true, replyTo, replyMarkup });
   if (!r.ok) console.error('[telegram] send failed:', r.error);
   return r.messageIds;
 }
@@ -2012,6 +2040,79 @@ function hiveTaskList(): HiveTask[] {
     const ledger = hive.tasks() as { tasks?: HiveTask[] };
     return Array.isArray(ledger?.tasks) ? ledger.tasks : [];
   } catch { return []; }
+}
+
+/** Send one forwarded question, with a button per numbered option and a
+ *  dismiss button, and remember what those buttons answer. */
+async function sendTelegramAsk(ask: TelegramAsk, lang: string): Promise<number[]> {
+  const options = tgCore.parseOptions(ask.q);
+  const key = tgCore.askShortKey(ask);
+  const ids = await telegramSendToOwner(tgCore.formatAsk(ask, lang), undefined, tgCore.askKeyboard(key, options, lang));
+  if (ids.length === 0) return ids;
+  rememberTelegramMessages(ids, { kind: 'ask', taskId: ask.taskId, q: ask.q });
+  const buttons = { ...(telegramRuntime().askButtons ?? {}), [key]: { taskId: ask.taskId, q: ask.q, options } };
+  const keys = Object.keys(buttons);
+  for (const k of keys.slice(0, Math.max(0, keys.length - 200))) delete buttons[k];
+  writeTelegramRuntime({ askButtons: buttons });
+  return ids;
+}
+
+/** A button press on a forwarded question: pick an option, or dismiss it. */
+async function handleTelegramCallback(d: Extract<TelegramDecision, { kind: 'callback' }>, lang: string): Promise<void> {
+  const S = tgCore.strings(lang);
+  const token = telegramSettings().botToken;
+  if (!token) return;
+  const entry = telegramRuntime().askButtons?.[d.key];
+  if (!entry || !hive.enabled()) {
+    await answerCallback(token, d.callbackId, S.answerStale);
+    await editReplyMarkup(token, d.chatId, d.messageId, null);
+    return;
+  }
+  if (d.action === 'answer') {
+    const choice = d.option !== undefined ? entry.options[d.option - 1] : undefined;
+    if (!choice) { await answerCallback(token, d.callbackId, S.answerStale); return; }
+    await answerCallback(token, d.callbackId, S.answerPicked(d.option ?? 0));
+    await editReplyMarkup(token, d.chatId, d.messageId, null);
+    await answerTelegramAsk(entry.taskId, entry.q, `${d.option}. ${choice}`, d.messageId, lang);
+    return;
+  }
+  // Dismiss: same as the ASK ME tab — mark the open entry dismissed, keep the
+  // question on the card, leave the card blocked for the orchestrator to re-ask.
+  const task = hiveTaskList().find((t) => t.id === entry.taskId);
+  let changed = false;
+  const humanQA = (task?.humanQA ?? []).map((e) => {
+    if (!changed && e.q === entry.q && !e.a && !e.dismissedAt) { changed = true; return { ...e, dismissedAt: new Date().toISOString() }; }
+    return e;
+  });
+  const ok = !!task && changed && hive.patchTask(task.id, { humanQA });
+  await answerCallback(token, d.callbackId, ok ? S.dismissed : S.answerStale);
+  await editReplyMarkup(token, d.chatId, d.messageId, null);
+}
+
+/** Turn a voice note into text with the configured engine. Echoes what was
+ *  heard so the owner can see it was understood; null when it could not be. */
+async function transcribeTelegramVoice(
+  d: Extract<TelegramDecision, { kind: 'message' }>,
+  lang: string
+): Promise<string | null> {
+  const S = tgCore.strings(lang);
+  const s = telegramSettings();
+  if (!d.voice || !s.botToken) return null;
+  const groqKey = readConfig().groqApiKey;
+  if (!resolveEngine(s.voice, groqKey)) { await telegramSendToOwner(S.voiceOff, d.messageId); return null; }
+  const dl = await downloadTelegramFile(s.botToken, d.voice, telegramFilesDir());
+  if (!dl.ok || !dl.path) { await telegramSendToOwner(S.voiceFailed(tgCore.escapeHtml(dl.error ?? 'download failed')), d.messageId); return null; }
+  let audio: Buffer;
+  try { audio = readFileSync(dl.path); } catch (e) {
+    await telegramSendToOwner(S.voiceFailed(tgCore.escapeHtml(e instanceof Error ? e.message : String(e))), d.messageId);
+    return null;
+  } finally {
+    try { unlinkSync(dl.path); } catch { /* already gone */ }
+  }
+  const r = await transcribeVoice({ settings: s.voice, groqKey, audio, mime: d.voice.mime, filename: d.voice.name });
+  if (!r.ok || !r.text) { await telegramSendToOwner(S.voiceFailed(tgCore.escapeHtml(r.error ?? 'empty transcript')), d.messageId); return null; }
+  await telegramSendToOwner(S.heard(tgCore.escapeHtml(tgCore.truncate(r.text, 600))), d.messageId);
+  return r.text;
 }
 
 /** One decision from the polling loop → office work or a reply. */
@@ -2035,7 +2136,19 @@ async function handleTelegramDecision(d: Exclude<TelegramDecision, { kind: 'igno
     return;
   }
 
+  if (d.kind === 'callback') {
+    await handleTelegramCallback(d, lang);
+    return;
+  }
+
   if (!hive.enabled()) { await telegramSendToOwner(S.hiveOff, d.messageId); return; }
+
+  // A voice note becomes text first, then goes down the same paths as typing.
+  if (d.voice) {
+    const heard = await transcribeTelegramVoice(d, lang);
+    if (heard === null && !d.text && d.files.length === 0) return;
+    if (heard) d = { ...d, text: d.text ? `${d.text}\n\n${heard}` : heard };
+  }
 
   // A reply to one of our messages: an answer to a question, or a follow-up.
   let followUpOf: string | undefined;
@@ -2076,10 +2189,7 @@ async function handleTelegramCommand(cmd: string, messageId: number, lang: strin
       // Re-send every open question, even ones already delivered once.
       const asks = tgCore.openAsks(hiveTaskList());
       if (asks.length === 0) { await telegramSendToOwner(S.noAsks, messageId); return; }
-      for (const ask of asks) {
-        const ids = await telegramSendToOwner(tgCore.formatAsk(ask, lang));
-        rememberTelegramMessages(ids, { kind: 'ask', taskId: ask.taskId, q: ask.q });
-      }
+      for (const ask of asks) await sendTelegramAsk(ask, lang);
       return;
     }
     default:
@@ -2192,10 +2302,9 @@ async function pollTelegramOutbound(): Promise<void> {
     for (const ask of tgCore.openAsks(tasks)) {
       const key = tgCore.askKey(ask);
       if (asksNotified.has(key)) continue;
-      const ids = await telegramSendToOwner(tgCore.formatAsk(ask, lang));
+      const ids = await sendTelegramAsk(ask, lang);
       if (ids.length === 0) continue; // transient failure → retry next tick
       asksNotified.add(key);
-      rememberTelegramMessages(ids, { kind: 'ask', taskId: ask.taskId, q: ask.q });
       writeTelegramRuntime({ asksNotified: cappedIds(asksNotified) });
     }
 
@@ -4723,6 +4832,23 @@ ipcMain.handle('telegram:newPairingCode', () => {
 });
 ipcMain.handle('telegram:unpair', () => {
   writeTelegramSettings({ ownerId: undefined, ownerChatId: undefined, ownerName: undefined });
+  notifyTelegramState();
+  return telegramStatus();
+});
+/** Voice-note transcription: engine plus, for a local server, its URL, model
+ *  and language hint. The URL must be http(s); anything else clears it. */
+ipcMain.handle('telegram:setVoice', (_evt, raw: unknown) => {
+  const p = (raw ?? {}) as { engine?: unknown; localUrl?: unknown; localModel?: unknown; language?: unknown };
+  const cur = telegramSettings().voice ?? {};
+  const engine: TranscribeEngine = p.engine === 'local' || p.engine === 'groq' || p.engine === 'off' || p.engine === 'auto'
+    ? p.engine : (cur.engine ?? 'auto');
+  const voice: VoiceSettings = {
+    engine,
+    localUrl: p.localUrl === undefined ? cur.localUrl : validLocalUrl(p.localUrl),
+    localModel: typeof p.localModel === 'string' ? (p.localModel.trim() || undefined) : cur.localModel,
+    language: typeof p.language === 'string' ? (p.language.trim().toLowerCase().slice(0, 5) || undefined) : cur.language
+  };
+  writeTelegramSettings({ voice });
   notifyTelegramState();
   return telegramStatus();
 });

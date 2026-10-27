@@ -183,6 +183,11 @@ export interface TelegramStatus {
   pairingLink?: string;
   lang: 'ru' | 'en';
   error?: string;
+  voiceEngine: 'auto' | 'local' | 'groq' | 'off';
+  voiceLocalUrl?: string;
+  voiceLanguage?: string;
+  /** The engine that would run right now, or null when voice notes cannot be transcribed. */
+  voiceActive: 'local' | 'groq' | null;
 }
 
 /** A card on the task kanban, persisted to hive/tasks.json. */
@@ -1239,6 +1244,9 @@ const api = {
     ipcRenderer.invoke('telegram:newPairingCode'),
   telegramUnpair: (): Promise<TelegramStatus> =>
     ipcRenderer.invoke('telegram:unpair'),
+  /** Voice-note transcription: engine, local server URL / model, language hint. */
+  telegramSetVoice: (v: { engine?: 'auto' | 'local' | 'groq' | 'off'; localUrl?: string; localModel?: string; language?: string }): Promise<TelegramStatus> =>
+    ipcRenderer.invoke('telegram:setVoice', v),
   telegramSetLanguage: (lang: 'ru' | 'en'): Promise<TelegramStatus> =>
     ipcRenderer.invoke('telegram:setLanguage', lang),
   /** Live state pushes (connected, paired, errors); returns an unsubscribe fn. */

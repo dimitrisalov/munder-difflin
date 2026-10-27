@@ -45,10 +45,17 @@ export function TelegramSettings({ godName }: { godName: string }) {
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [voiceUrl, setVoiceUrl] = useState('');
+  const [voiceLang, setVoiceLang] = useState('');
 
   useEffect(() => {
     let alive = true;
-    window.cth.telegramStatus().then((s) => { if (alive) setStatus(s); }).catch(() => { /* main not ready */ });
+    window.cth.telegramStatus().then((s) => {
+      if (!alive) return;
+      setStatus(s);
+      setVoiceUrl(s.voiceLocalUrl ?? '');
+      setVoiceLang(s.voiceLanguage ?? '');
+    }).catch(() => { /* main not ready */ });
     const off = window.cth.onTelegramState((s) => setStatus(s));
     return () => { alive = false; off(); };
   }, []);
@@ -173,6 +180,46 @@ export function TelegramSettings({ godName }: { godName: string }) {
           </div>
         </div>
       )}
+
+      {/* Voice notes → text. Local = an OpenAI-compatible Whisper server on this PC. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={labelStyle}>{t('settings.connections.telegramVoice')}</span>
+          {(['auto', 'local', 'groq', 'off'] as const).map((engine) => (
+            <PixelButton
+              key={engine}
+              variant={status?.voiceEngine === engine ? 'primary' : 'secondary'}
+              size="sm"
+              onClick={() => { void run(() => window.cth.telegramSetVoice({ engine })); }}
+              disabled={busy}
+            >
+              {t(`settings.connections.telegramVoice_${engine}`)}
+            </PixelButton>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            value={voiceUrl}
+            onChange={(e) => setVoiceUrl(e.target.value)}
+            placeholder="http://127.0.0.1:8090/v1"
+            style={{ ...inputStyle, fontSize: 12 }}
+          />
+          <input
+            value={voiceLang}
+            onChange={(e) => setVoiceLang(e.target.value)}
+            placeholder="ru"
+            style={{ ...inputStyle, fontSize: 12, width: 64 }}
+          />
+          <PixelButton variant="ghost" size="sm" onClick={() => { void run(() => window.cth.telegramSetVoice({ localUrl: voiceUrl, language: voiceLang })); }} disabled={busy}>
+            {t('common.save')}
+          </PixelButton>
+        </div>
+        <span style={hintStyle}>
+          {status?.voiceActive
+            ? t('settings.connections.telegramVoiceActive', { engine: status.voiceActive === 'local' ? t('settings.connections.telegramVoice_local') : t('settings.connections.telegramVoice_groq') })
+            : t('settings.connections.telegramVoiceInactive')}
+        </span>
+      </div>
 
       {/* The bot's own language (its messages on the phone), not the app's. */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

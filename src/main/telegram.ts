@@ -20,16 +20,26 @@
  */
 import { request as httpsRequest } from 'node:https';
 import { createServer, type ClientRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { createWriteStream, mkdirSync, unlinkSync } from 'node:fs';
+import { createWriteStream, mkdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { basename, join } from 'node:path';
+import { basename, extname, join } from 'node:path';
 
 /** What a classified update looks like (see telegram-core.cjs classifyUpdate). */
 export type TelegramDecision =
   | { kind: 'ignore'; reason: string }
   | { kind: 'pair'; userId: number; chatId: number; name: string }
   | { kind: 'command'; cmd: string; args: string; chatId: number; messageId: number }
-  | { kind: 'message'; text: string; files: TelegramFileRef[]; chatId: number; messageId: number; replyTo: number | null };
+  | { kind: 'message'; text: string; files: TelegramFileRef[]; voice: TelegramVoiceRef | null; chatId: number; messageId: number; replyTo: number | null }
+  | { kind: 'callback'; callbackId: string; chatId: number; messageId: number; action: 'answer' | 'dismiss'; key: string; option?: number };
+
+/** A voice note / audio / round video to transcribe (telegram-core extractVoice). */
+export interface TelegramVoiceRef {
+  file_id: string;
+  name: string;
+  mime: string;
+  size?: number;
+  duration?: number;
+}
 
 export interface TelegramFileRef {
   file_id: string;
@@ -135,6 +145,8 @@ export async function sendTelegramText(opts: {
   text: string;
   html?: boolean;
   replyTo?: number;
+  /** Inline keyboard, attached to the LAST chunk (the one the owner sees). */
+  replyMarkup?: unknown;
 }): Promise<{ ok: boolean; messageIds: number[]; error?: string }> {
   const messageIds: number[] = [];
   const chunks = core.splitMessage(opts.text);
@@ -144,7 +156,8 @@ export async function sendTelegramText(opts: {
       chat_id: opts.chatId,
       link_preview_options: { is_disabled: true },
       // Only the first chunk threads under the original message.
-      ...(i === 0 && opts.replyTo ? { reply_parameters: { message_id: opts.replyTo, allow_sending_without_reply: true } } : {})
+      ...(i === 0 && opts.replyTo ? { reply_parameters: { message_id: opts.replyTo, allow_sending_without_reply: true } } : {}),
+      ...(i === chunks.length - 1 && opts.replyMarkup ? { reply_markup: opts.replyMarkup } : {})
     };
     let res = await callTelegram<{ message_id: number }>(opts.token, 'sendMessage',
       opts.html ? { ...base, text: chunk, parse_mode: 'HTML' } : { ...base, text: chunk });
@@ -155,6 +168,70 @@ export async function sendTelegramText(opts: {
     messageIds.push(res.result.message_id);
   }
   return { ok: true, messageIds };
+}
+
+/** Acknowledge a button press (the small toast on the phone). Best-effort. */
+export async function answerCallback(token: string, callbackId: string, text?: string): Promise<void> {
+  await callTelegram(token, 'answerCallbackQuery', { callback_query_id: callbackId, ...(text ? { text } : {}) });
+}
+
+/** Replace (or, with null, remove) the inline keyboard of a sent message. */
+export async function editReplyMarkup(token: string, chatId: number, messageId: number, markup: unknown | null): Promise<void> {
+  await callTelegram(token, 'editMessageReplyMarkup', {
+    chat_id: chatId, message_id: messageId, reply_markup: markup ?? { inline_keyboard: [] }
+  });
+}
+
+/** Bot uploads: photos up to 10 MB, any document up to 50 MB. */
+const PHOTO_MAX_BYTES = 10 * 1024 * 1024;
+export const UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+const PHOTO_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+
+/**
+ * Send a local file to a chat: images as photos (Telegram shows them inline),
+ * everything else as a document. `captionHtml` is Telegram HTML, cut to the
+ * 1024-character caption limit. Uses the global fetch/FormData (Node 20).
+ */
+export async function sendTelegramFile(opts: {
+  token: string;
+  chatId: number;
+  path: string;
+  captionHtml?: string;
+  replyTo?: number;
+}): Promise<{ ok: boolean; messageId?: number; error?: string }> {
+  let size: number;
+  try { size = statSync(opts.path).size; } catch (e) { return { ok: false, error: `cannot read file: ${errMsg(e)}` }; }
+  if (size === 0) return { ok: false, error: 'file is empty' };
+  if (size > UPLOAD_MAX_BYTES) return { ok: false, error: 'file over 50 MB (Telegram bot upload limit)' };
+  const asPhoto = PHOTO_EXTS.has(extname(opts.path).toLowerCase()) && size <= PHOTO_MAX_BYTES;
+  const form = new FormData();
+  form.append('chat_id', String(opts.chatId));
+  if (opts.captionHtml) {
+    form.append('caption', opts.captionHtml.length > 1024 ? `${opts.captionHtml.slice(0, 1023)}…` : opts.captionHtml);
+    form.append('parse_mode', 'HTML');
+  }
+  if (opts.replyTo) form.append('reply_parameters', JSON.stringify({ message_id: opts.replyTo, allow_sending_without_reply: true }));
+  let bytes: Buffer;
+  try { bytes = readFileSync(opts.path); } catch (e) { return { ok: false, error: `cannot read file: ${errMsg(e)}` }; }
+  form.append(asPhoto ? 'photo' : 'document', new Blob([new Uint8Array(bytes)]), sanitizeFilename(basename(opts.path)));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 120_000);
+  try {
+    const res = await fetch(`https://${API_HOST}/bot${opts.token}/${asPhoto ? 'sendPhoto' : 'sendDocument'}`, {
+      method: 'POST', body: form, signal: controller.signal
+    });
+    const json = await res.json().catch(() => ({})) as { ok?: boolean; result?: { message_id?: number }; description?: string };
+    if (json.ok && json.result?.message_id) return { ok: true, messageId: json.result.message_id };
+    // A caption Telegram cannot parse: retry once without formatting.
+    if (opts.captionHtml && /parse entities/i.test(json.description ?? '')) {
+      return sendTelegramFile({ ...opts, captionHtml: htmlToPlain(opts.captionHtml) });
+    }
+    return { ok: false, error: json.description ?? `HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, error: errMsg(e) };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Keep only a safe basename; anything odd becomes `_`. */
@@ -274,7 +351,7 @@ export class TelegramBot {
       if (!token) { this.stop(); this.opts.onState?.({ connected: false, error: 'no bot token' }); return; }
       const res = await callTelegram<{ update_id: number }[]>(
         token, 'getUpdates',
-        { offset: this.offset, timeout: POLL_TIMEOUT_S, allowed_updates: ['message'] },
+        { offset: this.offset, timeout: POLL_TIMEOUT_S, allowed_updates: ['message', 'callback_query'] },
         (POLL_TIMEOUT_S + 15) * 1000,
         (req) => { this.current = req; }
       );
@@ -329,7 +406,7 @@ export interface TelegramReplyServerOptions {
 /**
  * Loopback-only HTTP endpoint for the bundled `md-telegram-reply.cjs` helper.
  * Binds to 127.0.0.1, checks the per-session token in constant time, refuses
- * non-loopback peers, and forwards `{ text, reply_to? }` to the owner's chat as
+ * non-loopback peers, and forwards `{ text?, file?, reply_to? }` to the owner's chat as
  * light markdown rendered to Telegram HTML.
  */
 export class TelegramReplyServer {
@@ -382,16 +459,22 @@ export class TelegramReplyServer {
         res.writeHead(status, { 'content-type': 'application/json' });
         res.end(JSON.stringify(payload));
       };
-      let parsed: { text?: unknown; reply_to?: unknown };
+      let parsed: { text?: unknown; reply_to?: unknown; file?: unknown };
       try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
       catch { send(400, { ok: false, error: 'bad json' }); return; }
       const botToken = this.opts.getBotToken();
       const chatId = this.opts.getOwnerChatId();
       if (!botToken) { send(503, { ok: false, error: 'no bot token' }); return; }
       if (chatId === undefined) { send(503, { ok: false, error: 'bot is not paired yet' }); return; }
-      if (typeof parsed.text !== 'string' || !parsed.text.trim()) { send(400, { ok: false, error: 'text required' }); return; }
+      const text = typeof parsed.text === 'string' ? parsed.text.trim() : '';
+      const file = typeof parsed.file === 'string' && parsed.file.trim() ? parsed.file.trim() : undefined;
+      if (!text && !file) { send(400, { ok: false, error: 'text or file required' }); return; }
       const replyTo = typeof parsed.reply_to === 'number' && Number.isInteger(parsed.reply_to) ? parsed.reply_to : undefined;
-      sendTelegramText({ token: botToken, chatId, text: core.mdToTelegramHtml(parsed.text), html: true, replyTo })
+      // A file goes out with the text as its caption; plain text as a message.
+      const delivery: Promise<{ ok: boolean; error?: string }> = file
+        ? sendTelegramFile({ token: botToken, chatId, path: file, captionHtml: text ? core.mdToTelegramHtml(text) : undefined, replyTo })
+        : sendTelegramText({ token: botToken, chatId, text: core.mdToTelegramHtml(text), html: true, replyTo });
+      delivery
         .then((r) => {
           if (r.ok) { try { this.opts.onReplied?.(replyTo); } catch { /* never break the reply */ } }
           send(r.ok ? 200 : 502, r.ok ? { ok: true } : { ok: false, error: r.error });

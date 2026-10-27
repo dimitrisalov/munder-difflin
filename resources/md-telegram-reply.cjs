@@ -12,6 +12,7 @@
  * Usage:
  *   node md-telegram-reply.cjs --text "..." [--reply-to <message_id>]
  *   node md-telegram-reply.cjs --text-file C:\path\result.md [--reply-to <message_id>]
+ *   node md-telegram-reply.cjs --file C:\path\cover.png [--text "caption"] [--reply-to <message_id>]
  *   (optional) --config /abs/path/to/telegram-reply.json
  *
  * The text may use light markdown: **bold**, `code`, ```blocks```, [label](url).
@@ -21,6 +22,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const path = require('node:path');
 const http = require('node:http');
 
 /** Parse `--key value` and `--key=value` pairs from argv. */
@@ -51,7 +53,12 @@ if (typeof args['text-file'] === 'string') {
   try { text = fs.readFileSync(args['text-file'], 'utf8'); }
   catch (e) { fail(`could not read --text-file: ${e.message}`); }
 }
-if (!text.trim()) fail('required: --text "<message>" or --text-file <path>');
+let file;
+if (typeof args.file === 'string' && args.file) {
+  file = path.resolve(args.file);
+  if (!fs.existsSync(file)) fail(`--file not found: ${file}`);
+}
+if (!text.trim() && !file) fail('required: --text "<message>", --text-file <path> or --file <path>');
 
 let replyTo;
 if (args['reply-to'] !== undefined) {
@@ -72,7 +79,7 @@ if (!cfg || typeof cfg.port !== 'number' || typeof cfg.token !== 'string') {
   fail(`malformed reply config at ${configPath}`);
 }
 
-const body = JSON.stringify(replyTo ? { text, reply_to: replyTo } : { text });
+const body = JSON.stringify({ ...(text.trim() ? { text } : {}), ...(file ? { file } : {}), ...(replyTo ? { reply_to: replyTo } : {}) });
 const req = http.request(
   {
     method: 'POST',

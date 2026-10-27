@@ -101,6 +101,37 @@ function extractFiles(msg) {
 }
 
 /**
+ * A voice note, audio file or round video note to transcribe, if the message
+ * carries one. Telegram sends voice notes as OGG/Opus.
+ * @returns {{ file_id: string, name: string, mime: string, size?: number, duration?: number } | null}
+ */
+function extractVoice(msg) {
+  if (!msg) return null;
+  const v = msg.voice || msg.audio || msg.video_note;
+  if (!v || typeof v.file_id !== 'string') return null;
+  const isVoice = !!msg.voice;
+  const isNote = !!msg.video_note;
+  return {
+    file_id: v.file_id,
+    name: isVoice ? 'voice.ogg' : isNote ? 'note.mp4' : (typeof v.file_name === 'string' && v.file_name ? v.file_name : 'audio.mp3'),
+    mime: typeof v.mime_type === 'string' ? v.mime_type : isVoice ? 'audio/ogg' : isNote ? 'video/mp4' : 'audio/mpeg',
+    size: typeof v.file_size === 'number' ? v.file_size : undefined,
+    duration: typeof v.duration === 'number' ? v.duration : undefined
+  };
+}
+
+/** Parse the data of one of our inline buttons: "a:<key>:<n>" (pick option n of
+ *  ask <key>) or "d:<key>" (dismiss ask <key>). Anything else is null. */
+function parseCallbackData(data) {
+  if (typeof data !== 'string') return null;
+  let m = /^a:([A-Za-z0-9]{6,16}):(\d{1,2})$/.exec(data);
+  if (m) return { action: 'answer', key: m[1], option: Number(m[2]) };
+  m = /^d:([A-Za-z0-9]{6,16})$/.exec(data);
+  if (m) return { action: 'dismiss', key: m[1] };
+  return null;
+}
+
+/**
  * Decide what one `getUpdates` entry means for the office.
  *
  * Only private chats are ever considered. A message from anyone but the paired
@@ -117,6 +148,20 @@ function extractFiles(msg) {
  *         | { kind: 'message', text: string, files: object[], chatId: number, messageId: number, replyTo: number | null }}
  */
 function classifyUpdate(update, ownerId, pairingCode) {
+  // A press on one of our inline buttons. Owner-only, like everything else.
+  const cb = update && update.callback_query;
+  if (cb && typeof cb === 'object') {
+    const from = cb.from || {};
+    const cmsg = cb.message || {};
+    if (ownerId == null || from.id !== ownerId || from.is_bot) return { kind: 'ignore', reason: 'not the owner' };
+    if (!cmsg.chat || cmsg.chat.type !== 'private') return { kind: 'ignore', reason: 'not a private chat' };
+    const parsed = parseCallbackData(cb.data);
+    if (!parsed || typeof cb.id !== 'string') return { kind: 'ignore', reason: 'unknown button' };
+    return {
+      kind: 'callback', callbackId: cb.id, chatId: cmsg.chat.id,
+      messageId: typeof cmsg.message_id === 'number' ? cmsg.message_id : 0, ...parsed
+    };
+  }
   const msg = update && update.message;
   if (!msg || typeof msg !== 'object') return { kind: 'ignore', reason: 'not a message' };
   const chat = msg.chat || {};
@@ -140,11 +185,12 @@ function classifyUpdate(update, ownerId, pairingCode) {
   if (command) return { kind: 'command', cmd: command.cmd, args: command.args, chatId: chat.id, messageId };
 
   const files = extractFiles(msg);
-  if (!text && files.length === 0) return { kind: 'ignore', reason: 'empty message' };
+  const voice = extractVoice(msg);
+  if (!text && files.length === 0 && !voice) return { kind: 'ignore', reason: 'empty message' };
   const replyTo = msg.reply_to_message && typeof msg.reply_to_message.message_id === 'number'
     ? msg.reply_to_message.message_id
     : null;
-  return { kind: 'message', text, files, chatId: chat.id, messageId, replyTo };
+  return { kind: 'message', text, files, voice, chatId: chat.id, messageId, replyTo };
 }
 
 // ─── Outbound text ──────────────────────────────────────────────────────────
@@ -243,6 +289,36 @@ function applyAnswer(task, q, answer, nowIso) {
 }
 
 /**
+ * The numbered options of an ask ("1. Yes, publish", "2) Wait for Monday"),
+ * at most 8, in order. Buttons are only offered when there are two or more.
+ */
+function parseOptions(q) {
+  const out = [];
+  for (const line of String(q || '').split('\n')) {
+    const m = /^\s*(\d{1,2})[.)]\s+(.+?)\s*$/.exec(line);
+    if (m) out.push(m[2].replace(/\*\*/g, '').replace(/`/g, ''));
+    if (out.length >= 8) break;
+  }
+  return out.length >= 2 ? out : [];
+}
+
+/** A short, callback-safe key for one ask (Telegram allows 64 bytes of data). */
+function askShortKey(ask) {
+  return crypto.createHash('sha256').update(askKey(ask)).digest('hex').slice(0, 10);
+}
+
+/**
+ * Inline keyboard for an ask: one button per option ("1 · Yes, publish"),
+ * plus a dismiss button. No options → only the dismiss button.
+ */
+function askKeyboard(shortKey, options, lang) {
+  const S = strings(lang);
+  const rows = options.map((o, i) => [{ text: truncate(`${i + 1} · ${o}`, 60), callback_data: `a:${shortKey}:${i + 1}` }]);
+  rows.push([{ text: S.dismissButton, callback_data: `d:${shortKey}` }]);
+  return { inline_keyboard: rows };
+}
+
+/**
  * Bounded map from a Telegram message we sent → what it was about, so the
  * owner's reply to it can be routed. Insertion-ordered; oldest evicted first.
  * Entries: { kind: 'ask', taskId, q } | { kind: 'task', taskId }.
@@ -311,7 +387,13 @@ const STRINGS = {
     thousand: 'тыс.',
     limitsHead: 'Расход токенов (работа агентов, без повторного чтения кэша):',
     noLimits: 'Лимиты не заданы. Их можно задать в Settings → Autonomy & Budgets.',
-    limitsAgents: 'Лимиты агентов:'
+    limitsAgents: 'Лимиты агентов:',
+    dismissButton: '✖ Снять вопрос',
+    answerPicked: (n) => `Выбран вариант ${n}`,
+    dismissed: 'Вопрос снят. Карточка осталась на канбане.',
+    heard: (t) => `🎙 Распознал: «${t}»`,
+    voiceOff: 'Голосовые пока не распознаются: в настройках Telegram не выбран способ распознавания.',
+    voiceFailed: (e) => `Не получилось распознать голосовое: ${e}`
   },
   en: {
     paired: (name) => `Done, ${name}: this bot is now paired to you. Send tasks for the office right here.\n\n/help — what I can do.`,
@@ -356,7 +438,13 @@ const STRINGS = {
     thousand: 'k',
     limitsHead: 'Token use (agents\' work, cache re-reads excluded):',
     noLimits: 'No limits set. Set them in Settings → Autonomy & Budgets.',
-    limitsAgents: 'Agent limits:'
+    limitsAgents: 'Agent limits:',
+    dismissButton: '✖ Dismiss the question',
+    answerPicked: (n) => `Option ${n} chosen`,
+    dismissed: 'Question dismissed. The card stays on the board.',
+    heard: (t) => `🎙 Heard: “${t}”`,
+    voiceOff: 'Voice notes are not transcribed yet: no transcription engine is chosen in the Telegram settings.',
+    voiceFailed: (e) => `Could not transcribe the voice note: ${e}`
   }
 };
 
@@ -485,9 +573,9 @@ function buildRequestProtocol(opts) {
     `[TELEGRAM REQUEST PROTOCOL — the owner sent this from Telegram on their phone; tracked as kanban card ${opts.taskId}]`,
     '1. ROUTE FAST — check the live roster (registry.json, fleet.json) and hand this to the single best-fitting existing agent; do small things yourself.',
     `2. DELEGATE WITH THE REPLY HANDLE — tell that agent to post its real result back to the owner itself when done, using exactly: ${reply}`,
-    '   For long text, write it to a file and pass --text-file <path> instead of --text. Results that are files: put them in the task folder and send the path.',
+    '   For long text, write it to a file and pass --text-file <path> instead of --text. To send a result file (image, PDF, document) add --file <absolute path>; --text then becomes its caption.',
     '3. PHONE-SIZED REPLIES — short headline + the actual outcome/specifics. Plain text or light markdown (**bold**, `code`, [label](url)). Never a bare "done".',
-    `4. QUESTIONS — if a decision is genuinely needed, set card ${opts.taskId} to blocked and append {q, askedAt} to its humanQA. The harness forwards the ask to the owner\'s Telegram and writes the answer back into the card.`,
+    `4. QUESTIONS — if a decision is genuinely needed, set card ${opts.taskId} to blocked and append {q, askedAt} to its humanQA. The harness forwards the ask to the owner\'s Telegram and writes the answer back into the card. Put choices on their own lines as "1. …", "2. …": the owner gets one tap buttons for them.`,
     `5. CLOSE THE CARD — when finished set card ${opts.taskId} status to 'done' and fill its 'result' (a short summary). The harness sends that summary to Telegram if no direct reply was posted.`,
     '6. Ask the owner before spending money, publishing anything, deleting files or installing software.',
     '',
@@ -507,6 +595,8 @@ module.exports = {
   parseCommand,
   extractText,
   extractFiles,
+  extractVoice,
+  parseCallbackData,
   classifyUpdate,
   escapeHtml,
   mdToTelegramHtml,
@@ -516,6 +606,9 @@ module.exports = {
   openAsks,
   askKey,
   applyAnswer,
+  parseOptions,
+  askShortKey,
+  askKeyboard,
   MessageLedger,
   strings,
   formatDone,
