@@ -79,6 +79,7 @@ import { buildWorkerLaunch } from './workerLaunch';
 import { ControlRegistry } from './control';
 import { WorkerWakeWatchdog, WORKER_WAKE_REPORT_MS, activityEvidenceAt, type WorkerWakeFacts } from './workerWake';
 import { inboxNudgeText } from '../shared/hiveNudge';
+import { remoteControlLabel, remoteControlLaunchArgs } from '../shared/providerAutomation';
 import { resolveGodName } from '../shared/godIdentity';
 import { fetchHireManifest, readHireManifestFiles, listHireTemplates } from './hire';
 import { buildHireManifest, hireFileName, serializeHire } from '../shared/hireExport';
@@ -3729,11 +3730,13 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
     // opaque when several agents run at once — especially with remoteControlAtStartup
     // on, where RC auto-enables for every session. Slugify the friendly name into a
     // single safe token; Claude still appends its own random suffix for uniqueness.
-    if (!args.includes('--remote-control-session-name-prefix')) {
-      const label = (opts.hive.name || opts.hive.id || '')
-        .trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
-      if (label) args.push('--remote-control-session-name-prefix', label);
+    const rcLabel = remoteControlLabel(opts.hive.name || opts.hive.id);
+    if (rcLabel && !args.includes('--remote-control-session-name-prefix')) {
+      args.push('--remote-control-session-name-prefix', rcLabel);
     }
+    // The god always runs with Remote Control on, so the human can approve his
+    // permission prompts from their phone — fresh or resumed, every launch.
+    if (opts.hive.isGod) args.push(...remoteControlLaunchArgs(provider, rcLabel, args));
     // Coarse runaway cap.
     if (typeof cfg.maxTurns === 'number' && cfg.maxTurns > 0 && !args.includes('--max-turns')) {
       args.push('--max-turns', String(cfg.maxTurns));

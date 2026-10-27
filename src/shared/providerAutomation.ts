@@ -214,15 +214,28 @@ export function clearCommandForProvider(
   return contextCommandsForProvider(provider).clear;
 }
 
-/** Claude exposes remote control as a slash command; Codex uses its daemon and
- * Kimi has no equivalent slash command. */
-export function remoteControlCommandForProvider(
+/** An agent's friendly name (Michael, Jim, Dev1…) as one argv-safe token for
+ * Remote Control session names. Empty when nothing usable is left. */
+export function remoteControlLabel(name?: string): string {
+  return (name ?? '').trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+/** Launch flags that switch Remote Control on for a Claude session from the
+ * start. This used to be a `/remote-control <name>` typed into the TUI once it
+ * looked ready; on a slow start (Windows, a resumed session) the Enter could
+ * land before the prompt took input, leaving the command in the box so the next
+ * thing anyone typed became part of the session name. Codex uses its daemon and
+ * Kimi has no equivalent. Empty when the args already ask for it or there is no
+ * label (`--remote-control` takes an optional value, so a bare flag could swallow
+ * the next argument). */
+export function remoteControlLaunchArgs(
   provider: AgentProvider,
-  sessionName?: string
-): string | null {
-  if (provider !== 'claude') return null;
-  const name = sessionName?.trim();
-  return name ? `/remote-control ${name}` : '/remote-control';
+  label: string,
+  args: readonly string[]
+): string[] {
+  if (provider !== 'claude' || !label) return [];
+  if (args.includes('--remote-control') || args.includes('--rc')) return [];
+  return ['--remote-control', label];
 }
 
 /** Initial TUI output needs a short provider-specific settle before typing. */

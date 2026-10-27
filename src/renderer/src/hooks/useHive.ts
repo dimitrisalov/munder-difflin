@@ -11,7 +11,6 @@ import {
 import {
   clearCommandForProvider,
   compactionCommandForProvider,
-  remoteControlCommandForProvider,
   terminalReadyToReceive
 } from '../../../shared/providerAutomation';
 import { DEFAULT_CONTEXT_TRIGGER, type ContextRule } from '../../../shared/triggers';
@@ -32,7 +31,6 @@ const GOD_ID = 'god';
 const SPAWN_ACCENTS = ['coral', 'mint', 'sky', 'lemon', 'lilac', 'peach'] as const;
 const GOD_PTY = `pty-${GOD_ID}`;
 
-const REMOTE_CONTROL_SETTLE_MS = 1500;
 // Provider-agnostic PTY-quiescence idle fallback (#2e). A non-Claude bridge that
 // fires a 'working' event but never its turn-end signal (Stop / session.idle /
 // agent_end) would pin the agent 'working' forever → the idle-only inbox-wake nudge
@@ -83,9 +81,9 @@ const INITIAL_GOD_PROMPT = [
 ].join('\n');
 
 // Per-pty submission chain. Every submitToPty for a given pty is appended here so
-// two callers (e.g. the boot sequence's /remote-control and the inbox-wake nudge)
-// can NEVER interleave their text + Enter — which jammed them onto one line and
-// produced "Unknown command: /remote-control<next prompt>".
+// two callers (e.g. the boot orientation prompt and the inbox-wake nudge) can
+// NEVER interleave their text + Enter — which jammed them onto one line (back when
+// boot typed /remote-control: "Unknown command: /remote-control<next prompt>").
 const writeChains = new Map<string, Promise<void>>();
 const readyPids = new Map<string, number>();
 
@@ -328,7 +326,7 @@ export function useHive(config: HarnessConfig | null): void {
   const godSpawning = useRef(false);
   // Per-agent timestamp until which auto-typers (inbox-wake #3, queue-drain #4)
   // must leave the agent alone — set while its boot sequence is typing so nothing
-  // collides with /remote-control + the orientation prompt.
+  // collides with the orientation prompt.
   const bootGraceUntil = useRef<Record<string, number>>({});
   // Agents whose one-time TUI protocol seed (Crush, seedDelivery:'type-into-tui')
   // has already been typed — guards effect #3b against re-seeding. (ondev-b)
@@ -450,25 +448,19 @@ export function useHive(config: HarnessConfig | null): void {
       useStore.getState().addAgent(god);
       useStore.getState().setGodStatus('ready');
 
-      // Kick Michael off once his TUI is up. Always re-enable remote control so
-      // the human can approve permission prompts from their phone (best-effort — a
-      // failed/unknown slash command just prints to his terminal and is harmless).
-      // Then, ONLY on a genuinely fresh spawn, hand him the orientation prompt —
-      // a RESUMED Michael already has his full context and must not be re-oriented
-      // mid-thread (that would reset the floor's situational awareness). Both go
-      // through the per-pty submit chain, so they're strictly sequential and can't
-      // jam together; the boot-grace window keeps the inbox-wake/drain loops off
+      // Kick Michael off once his TUI is up. Remote control is NOT typed here: the
+      // main process launches a Claude god with `--remote-control <name>` (a typed
+      // command whose Enter landed too early sat in his input box, and the next
+      // thing anyone typed became part of the session name). ONLY on a genuinely
+      // fresh spawn, hand him the orientation prompt — a RESUMED Michael already
+      // has his full context and must not be re-oriented mid-thread (that would
+      // reset the floor's situational awareness). It goes through the per-pty
+      // submit chain; the boot-grace window keeps the inbox-wake/drain loops off
       // Michael until he's settled. The live-PTY branch above skips this entirely.
       const resumedGod = res.resumed === true;
       bootGraceUntil.current[GOD_ID] = Date.now() + BOOT_GRACE_MS;
       void (async () => {
         try {
-          const remoteCommand = remoteControlCommandForProvider(godProvider, godName);
-          if (remoteCommand) {
-            // settleMs pauses the chain ~1.5s after /remote-control before the
-            // orientation prompt (fresh spawns only) is submitted next.
-            await submitToPty(GOD_PTY, remoteCommand, godProvider, REMOTE_CONTROL_SETTLE_MS);
-          }
           if (!cancelled && !resumedGod) {
             // A type-into-tui god (Crush) can't ride its hive protocol on argv, so the
             // main process hands it back as seedPrompt — type it FIRST (identity), then

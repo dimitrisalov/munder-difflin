@@ -9,7 +9,8 @@ const {
   compactionCommandForProvider,
   contextCommandsForProvider,
   isCompactionCommand,
-  remoteControlCommandForProvider,
+  remoteControlLabel,
+  remoteControlLaunchArgs,
   terminalReadySettleMs,
   terminalReadyToReceive
 } = loadTs('src/shared/providerAutomation.ts');
@@ -119,11 +120,26 @@ test('every provider preset has a considered context-command entry', () => {
   }
 });
 
-test('Claude alone receives a remote-control slash command', () => {
-  assert.equal(remoteControlCommandForProvider('claude', 'Michael'), '/remote-control Michael');
-  assert.equal(remoteControlCommandForProvider('codex', 'Jim'), null);
-  assert.equal(remoteControlCommandForProvider('grok', 'Grok'), null);
-  assert.equal(remoteControlCommandForProvider('kimi', 'Pam'), null);
+test('Claude alone gets Remote Control as a launch flag, nothing typed', () => {
+  assert.deepEqual(remoteControlLaunchArgs('claude', 'Michael', []), ['--remote-control', 'Michael']);
+  assert.deepEqual(remoteControlLaunchArgs('codex', 'Jim', []), []);
+  assert.deepEqual(remoteControlLaunchArgs('grok', 'Grok', []), []);
+  assert.deepEqual(remoteControlLaunchArgs('kimi', 'Pam', []), []);
+});
+
+test('the Remote Control flag is never doubled and never bare', () => {
+  assert.deepEqual(remoteControlLaunchArgs('claude', 'Michael', ['--remote-control', 'Other']), []);
+  assert.deepEqual(remoteControlLaunchArgs('claude', 'Michael', ['--rc']), []);
+  // A bare `--remote-control` would take the next argument as its name.
+  assert.deepEqual(remoteControlLaunchArgs('claude', '', []), []);
+});
+
+test('Remote Control labels are one argv-safe token', () => {
+  assert.equal(remoteControlLabel('Michael'), 'Michael');
+  assert.equal(remoteControlLabel('  Michael Scott '), 'Michael-Scott');
+  assert.equal(remoteControlLabel('Майкл'), '');
+  assert.equal(remoteControlLabel('Dev 1 (backend)'), 'Dev-1-backend');
+  assert.equal(remoteControlLabel(undefined), '');
 });
 
 test('provider readiness policies allow each TUI to settle', () => {
