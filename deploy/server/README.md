@@ -25,12 +25,16 @@ Then, once:
 3. Open `http://<server tailscale ip>:6080/vnc.html` on a device in your
    tailnet; the password is in `/home/office/vnc-password.txt`. Finish the
    onboarding there.
+4. `office-remote` starts a Claude Code Remote Control session on the server
+   (in tmux, restarted at boot), so the server shows up in the Claude app and
+   can be looked after from there.
 
 ## Day to day
 
 - `office-update` pulls the branch, rebuilds and restarts.
 - `office-status` shows the services and the browser address.
 - `office-logs` follows the office log.
+- `office-remote` (re)starts the Remote Control session.
 
 The office runs as the unprivileged `office` user under systemd and comes back
 after a crash or a reboot. Only SSH is open to the internet; the browser view

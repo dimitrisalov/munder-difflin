@@ -14,7 +14,9 @@
 #   - the office itself, built from source, running under a virtual display
 #     (Xvfb) as a systemd service that restarts on failure and on reboot;
 #   - the office window in a browser (noVNC), bound to the Tailscale address
-#     only and behind a password.
+#     only and behind a password;
+#   - a Claude Code Remote Control session on the server (office-remote), so
+#     the server can be looked after from the Claude app without SSH.
 #
 # Safe to run again: every step checks what is already there.
 # Environment overrides: OFFICE_USER, REPO, BRANCH, SCREEN, TS_AUTHKEY.
@@ -46,7 +48,7 @@ step "System packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y --no-install-recommends \
-  ca-certificates curl git build-essential python3 xz-utils ufw \
+  ca-certificates curl git build-essential python3 xz-utils ufw tmux \
   xvfb xauth dbus-x11 x11vnc novnc websockify \
   libgtk-3-0t64 libnss3 libxss1 libasound2t64 libgbm1 libxshmfence1 \
   libatk-bridge2.0-0t64 libcups2t64 libsecret-1-0 \
@@ -210,10 +212,39 @@ ip=$(tailscale ip -4 2>/dev/null | head -n1)
 [ -n "$ip" ] && echo "office screen: http://${ip}:6080/vnc.html" || echo "tailscale: not logged in (tailscale up --ssh)"
 EOF
 printf '#!/usr/bin/env bash\nexec journalctl -u md-office -n 200 -f\n' > /usr/local/bin/office-logs
-chmod 755 /usr/local/bin/office-update /usr/local/bin/office-status /usr/local/bin/office-logs
+# A Claude Code session on the server that shows up in the Claude app, kept in
+# tmux so it outlives SSH. Needs Claude logged in first (see "Next" below);
+# `runuser -l office -c 'tmux attach -t remote'` answers its first prompts.
+cat > /usr/local/bin/office-remote <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if runuser -l ${OFFICE_USER} -c 'tmux has-session -t remote' 2>/dev/null; then
+  echo "remote session already running (attach: runuser -l ${OFFICE_USER} -c 'tmux attach -t remote')"
+else
+  runuser -l ${OFFICE_USER} -c 'tmux new-session -d -s remote -c ~ "claude remote-control"'
+  echo "remote session started; it appears in the Claude app as a session on this server"
+fi
+EOF
+chmod 755 /usr/local/bin/office-update /usr/local/bin/office-status /usr/local/bin/office-logs /usr/local/bin/office-remote
+
+# Starts the remote session at boot. Before Claude is logged in it just waits
+# at the login prompt inside tmux.
+cat > /etc/systemd/system/md-remote.service <<EOF
+[Unit]
+Description=Claude Remote Control session for looking after the server
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/office-remote
+[Install]
+WantedBy=multi-user.target
+EOF
 
 systemctl daemon-reload
 systemctl enable --now md-xvfb md-office md-vnc md-novnc
+systemctl enable md-remote
 
 step "Done"
 office-status || true
@@ -225,6 +256,7 @@ Next, once:
   3. Open http://<tailscale-ip>:6080/vnc.html from a device on your tailnet.
      Password: ${pw_file}
      Finish the office onboarding there; home folder: ${HOME_DIR}/office
+  4. office-remote                  (a Claude session on this server, in the Claude app)
 
-Later: office-update (new version), office-status, office-logs.
+Later: office-update (new version), office-status, office-logs, office-remote.
 EOF
