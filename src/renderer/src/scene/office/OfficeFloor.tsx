@@ -12,6 +12,7 @@ import { MessageEnvelope, type MessageAct } from './MessageEnvelope';
 import { hexToNumber, DEFAULT_CHARACTER } from './cast';
 import { pickSoloLine, pickExchange, type BreakSpot } from './cafeteriaLines';
 import { freeSeatInZone } from './seatZones';
+import { daylightAt, hoursOf, type Daylight } from './daylight';
 import {
   drawProp, idleAnimated, FLAT_PROPS, GRIND_SECONDS,
   drawBongSession, drawGamingSession, drawConsoleSession, drawNap,
@@ -831,6 +832,58 @@ export function OfficeFloor() {
       const updateProps = (dt: number): void => {
         propClock += dt;
         for (const p of animatedProps) drawProp(p.kind, p.g, propClock);
+      };
+
+      // ─── Day and night (daylight.ts) ──────────────────────────────────────
+      // A tint over the whole floor by the local clock. It sorts above every
+      // avatar and prop (their zIndex is a world y, a few hundred px) and below
+      // the name tags (50000+) and bubbles, so text stays readable. At night
+      // the lit monitors and the theme's lights glow through it, added on top.
+      const NIGHT_Z = 40000;
+      const mapPxW = mapRenderer.width * ts0, mapPxH = mapRenderer.height * ts0;
+      const nightG = new Graphics();
+      nightG.eventMode = 'none';
+      nightG.zIndex = NIGHT_Z;
+      charLayer.addChild(nightG);
+      const lightG = new Graphics();
+      lightG.eventMode = 'none';
+      lightG.zIndex = NIGHT_Z + 1;
+      lightG.blendMode = 'add';
+      charLayer.addChild(lightG);
+      const NO_TINT: Daylight = { color: 0, alpha: 0, night: 0 };
+      let daylight = NO_TINT;
+      let daylightAge = Infinity;   // seconds since the tint was last worked out
+      let dayNightOn: boolean | null = null;
+      let lightClock = 0;
+      const glow = (x: number, y: number, r: number, color: number, a: number): void => {
+        for (let i = 0; i < 6; i++) lightG.circle(x, y, r * (1 - i * 0.15)).fill({ color, alpha: a * 0.2 });
+      };
+      const updateDaylight = (dt: number): void => {
+        lightClock += dt;
+        daylightAge += dt;
+        const on = useStore.getState().dayNight;
+        if (on !== dayNightOn) { dayNightOn = on; daylightAge = Infinity; }
+        if (daylightAge >= 5) {
+          daylightAge = 0;
+          const next = on ? daylightAt(hoursOf(new Date())) : NO_TINT;
+          if (next.alpha !== daylight.alpha || next.color !== daylight.color) {
+            nightG.clear();
+            if (next.alpha > 0) nightG.rect(0, 0, mapPxW, mapPxH).fill({ color: next.color, alpha: next.alpha });
+          }
+          daylight = next;
+        }
+        lightG.clear();
+        const n = daylight.night;
+        if (n < 0.05) return;
+        // a lit monitor: the screen sits at 3..13 × 11..17 of its 2×2 block
+        for (const rt of runtimes.values()) {
+          const sc = rt.screen?.container;
+          if (sc?.visible) glow(sc.x + 8, sc.y + 14, 22, 0x8fc8ff, 0.5 * n);
+        }
+        for (const l of theme.lights ?? []) {
+          const f = l.flicker ? 0.85 + 0.15 * Math.sin(lightClock * 9) * Math.sin(lightClock * 3.7) : 1;
+          glow(l.x * ts0, l.y * ts0, l.radius, l.color, 0.6 * n * f);
+        }
       };
 
       // ─── Idle errands: small purposeful busywork for a quiet floor ─────────
@@ -1751,6 +1804,7 @@ export function OfficeFloor() {
         updateCoffeeRuns(dt);
         updateErrands(dt);
         updateProps(dt);
+        updateDaylight(dt);
         updateBossAura(dt);
         updateDeskLife(dt);
         updateBoardMoves(dt);

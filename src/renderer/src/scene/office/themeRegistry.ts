@@ -28,10 +28,11 @@ import interiorsUrl from '@/assets/tilesets/interiors.png?url';
 // .tmj is Tiled JSON; imported as raw text and parsed by the loader.
 import officeMapRaw from '@/assets/maps/office.tmj?raw';
 import brooklyn99MapRaw from '@/assets/maps/brooklyn99.tmj?raw';
-import { LOFT_LAYOUT, LOFT_ERRANDS } from '@/assets/maps/loft.layout';
+import { LOFT_LAYOUT, LOFT_ERRANDS, LOFT_LIGHTS } from '@/assets/maps/loft.layout';
 import { buildMap, type PropPlacement } from './mapBuild';
 import { FURNITURE } from './furniture';
 import { PROP_SIZE } from './props';
+import type { NightLight } from './daylight';
 import { seatZoneFor, type SeatAgent } from './seatZones';
 
 /** Theme identifiers. Only `office` exists in Phase 0; the five TV-show themes
@@ -155,6 +156,8 @@ export interface ThemeConfig {
   seatZoneFor?: (agent: SeatAgent) => string | undefined;
   /** Things drawn in code on top of the tiles (props.ts), sized by the builder. */
   props?: PropPlacement[];
+  /** What glows at night besides lit monitors (daylight.ts). */
+  lights?: NightLight[];
 }
 
 /** The existing office, expressed as a theme. Values are copied verbatim from
@@ -342,6 +345,7 @@ export const LOFT_THEME: ThemeConfig = {
   cast: OFFICE_THEME.cast,
   seatZoneFor,
   props: loftBuild.props,
+  lights: LOFT_LIGHTS,
 };
 
 /** All registered themes. Phase 0 ships only the office; show themes register

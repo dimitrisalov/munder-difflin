@@ -15,6 +15,7 @@
 
 import type { Layout } from '../../scene/office/mapBuild';
 import type { ErrandSpot } from '../../scene/office/themeRegistry';
+import type { NightLight } from '../../scene/office/daylight';
 
 const FLOOR = {
   sage: 783, beige: 777, cream: 781, gray: 779, teal: 813, blueDiamond: 809,
@@ -182,4 +183,11 @@ export const LOFT_ERRANDS: ErrandSpot[] = [
   { kind: 'dispenser', stand: { x: 34, y: 22 }, facing: 'right', fx: { x: 35, y: 21 }, duration: 3.5 },
   { kind: 'fridge', stand: { x: 31, y: 22 }, facing: 'up', fx: { x: 31, y: 21 }, duration: 3.2 },
   { kind: 'bin', stand: { x: 37, y: 24 }, facing: 'right', fx: { x: 38, y: 23 }, duration: 2.6 },
+];
+
+/** What glows when it gets dark (besides the lit monitors): the fireplace and
+ *  the vending machine. Tile coordinates of the light's centre. */
+export const LOFT_LIGHTS: NightLight[] = [
+  { x: 2, y: 19.8, radius: 36, color: 0xff9a3d, flicker: true },
+  { x: 34, y: 21, radius: 26, color: 0x9fe6ff },
 ];

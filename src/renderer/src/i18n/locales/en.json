@@ -472,6 +472,10 @@
       "desc": "The classic office, or the loft: one big hall with a library, studio, dev corner, lounge and kitchen, and desks by department. Everyone stays; they just take new desks.",
       "classic": "classic",
       "loft": "loft"
+    },
+    "dayNight": {
+      "title": "Day and night",
+      "desc": "The office follows your clock: sunset in the evening, lamps and screens glowing at night."
     }
   },
   "commandCenter": {

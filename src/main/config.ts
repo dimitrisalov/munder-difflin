@@ -354,6 +354,8 @@ export interface HarnessConfig {
   /** Which map the office floor shows when TV-show offices are off: the
    *  classic office or the loft (wave 7). Unset = classic. */
   officeMap?: 'classic' | 'loft';
+  /** Day and night on the office floor by the local clock. Unset = on. */
+  dayNight?: boolean;
   /** Per-CLI-provider local/self-hosted base URL (Ollama/LM Studio/vLLM, …) for the
    *  OpenCode/Crush/pi/qwen engines; applied at spawn (config-injection or proxy
    *  upstream). API KEYS are NOT stored here — they live write-only in the secret
