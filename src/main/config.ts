@@ -271,6 +271,10 @@ export interface HarnessConfig {
    *  maxPerHour times an hour (default 3). On unless enabled is false; read
    *  through watchdog-core.cjs's sanitize, never raw. */
   watchdog?: { enabled?: boolean; maxPerHour?: number };
+  /** The office boss's look on the floor (a cast name, e.g. 'theo'). The god is
+   *  rebuilt on every launch, so a pick made in Edit Agent is kept here or it
+   *  would revert to the default. Unset = 'michael'. */
+  godCharacter?: string;
   /** Folder of hire templates (`*.hire.json`) offered in Add Agent and used as
    *  the default place to export an agent to (wave 3). Unset = none. */
   hireTemplatesDir?: string;

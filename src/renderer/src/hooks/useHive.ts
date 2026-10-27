@@ -22,7 +22,7 @@ import { findWorkRequest, shouldHandoff, HANDOFF_PROMPT, RESUME_PREFIX } from '.
 import { resolveGodName } from '../../../shared/godIdentity';
 import { acquireTerminal, resetTerminal, isTerminalAutomationSafe } from '@/components/terminalPool';
 import { canDeliverToAgent, deliverWithAcknowledgement, checkPrecondition } from './queueDelivery';
-import { OFFICE_CAST, DEFAULT_CHARACTER } from '@/scene/office/cast';
+import { OFFICE_CAST, DEFAULT_CHARACTER, CAST_BY_NAME, type OfficeCharacterName } from '@/scene/office/cast';
 
 const GOD_ID = 'god';
 /** Accent palette for MAIN-spawned (voice-hired) agents — picked deterministically
@@ -71,8 +71,8 @@ function withStandingGoal(agent: Agent, text: string): string {
 
 // The first thing Michael (god) is told on a fresh spawn — orient him and put
 // him to work running the floor. Kept terse and action-oriented.
-const INITIAL_GOD_PROMPT = [
-  "You're online as Michael, the orchestrator of the hive. Get oriented, then start running the floor:",
+const initialGodPrompt = (name: string): string => [
+  `You're online as ${name}, the orchestrator of the hive. Get oriented, then start running the floor:`,
   '1. Read your memory.md and drain every message in your inbox.',
   '2. Review board.md + tasks.json and the current roster of agents (active vs archived).',
   '3. Check fleet health: read fleet.json in the hive root for every agent\'s live tokens, cost, status, breaker level, and inbox backlog (`claude agents` will NOT show your hive\'s agents). Flag anyone stalled, over-budget, or breaker-armed.',
@@ -428,7 +428,8 @@ export function useHive(config: HarnessConfig | null): void {
       const god: Agent = {
         id: GOD_ID,
         name: godName,
-        character: 'michael',
+        // The boss's look survives restarts through config (Edit Agent writes it).
+        character: CAST_BY_NAME[config.godCharacter as OfficeCharacterName] ? (config.godCharacter as OfficeCharacterName) : 'michael',
         accent: 'lemon',
         description: 'god — runs the floor, triages requests, escalates only critical calls to you',
         project: 'hive',
@@ -466,7 +467,7 @@ export function useHive(config: HarnessConfig | null): void {
             // main process hands it back as seedPrompt — type it FIRST (identity), then
             // the orientation kick. Serialized via writeChains so they can't jam. (ondev-b)
             if (res.seedPrompt) await submitToPty(GOD_PTY, res.seedPrompt, godProvider);
-            await submitToPty(GOD_PTY, INITIAL_GOD_PROMPT, godProvider);
+            await submitToPty(GOD_PTY, initialGodPrompt(godName), godProvider);
           }
         } catch { /* PTY may have died during startup */ }
         finally { bootGraceUntil.current[GOD_ID] = 0; }

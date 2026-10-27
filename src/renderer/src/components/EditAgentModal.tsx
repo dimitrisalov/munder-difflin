@@ -33,6 +33,7 @@ export interface EditAgentModalProps {
 export function EditAgentModal({ agent, onClose }: EditAgentModalProps) {
   const { t } = useTranslation();
   const updateAgent = useStore((s) => s.updateAgent);
+  const renameAgent = useStore((s) => s.renameAgent);
   const [config, setConfig] = useState<HarnessConfig | null>(null);
   const [exportNote, setExportNote] = useState<string | undefined>();
 
@@ -91,6 +92,13 @@ export function EditAgentModal({ agent, onClose }: EditAgentModalProps) {
       description: trimmedDescription,
       goal: trimmedGoal || undefined
     });
+    // A new name must reach the hive registry (what agents and the next launch
+    // read), not just this card — renameAgent does that, as the card's ✎ does.
+    if (trimmedName !== agent.name) void renameAgent(agent.id, trimmedName);
+    // The god is rebuilt on every launch; keep its look in config so it sticks.
+    if (agent.isGod && character !== agent.character) {
+      void window.cth.updateConfig({ godCharacter: character }).catch(() => { /* next launch shows the old look */ });
+    }
     onClose();
   };
 

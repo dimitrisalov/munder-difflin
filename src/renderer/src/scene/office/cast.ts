@@ -12,7 +12,8 @@ import { paintPortrait, sceneFrameBufs, SCENE_W, SCENE_H } from './portraitArt';
 export type OfficeCharacterName =
   | 'michael' | 'jim' | 'pam' | 'dwight' | 'kevin' | 'angela'
   | 'oscar' | 'stanley' | 'phyllis' | 'andy' | 'kelly' | 'ryan'
-  | 'toby' | 'creed' | 'meredith';
+  | 'toby' | 'creed' | 'meredith'
+  | 'theo';
 
 export interface CastMember {
   name: OfficeCharacterName;
@@ -40,6 +41,8 @@ export const OFFICE_CAST: CastMember[] = [
   { name: 'toby',     displayName: 'Toby',     shirt: '#9a8c5a', blurb: 'Human resources' },
   { name: 'creed',    displayName: 'Creed',    shirt: '#6b7a4b', blurb: 'Quality assurance' },
   { name: 'meredith', displayName: 'Meredith', shirt: '#b5544a', blurb: 'Supplier relations' },
+  // Not from the show: the owner's own boss, a white Devon Rex (catArt.ts).
+  { name: 'theo',     displayName: 'Theo',     shirt: '#e6dfd4', blurb: 'Devon Rex, the boss' },
 ];
 
 export const CAST_BY_NAME: Record<OfficeCharacterName, CastMember> =
