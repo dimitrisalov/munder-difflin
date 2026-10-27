@@ -28,9 +28,10 @@ import interiorsUrl from '@/assets/tilesets/interiors.png?url';
 // .tmj is Tiled JSON; imported as raw text and parsed by the loader.
 import officeMapRaw from '@/assets/maps/office.tmj?raw';
 import brooklyn99MapRaw from '@/assets/maps/brooklyn99.tmj?raw';
-import { LOFT_LAYOUT } from '@/assets/maps/loft.layout';
-import { buildMap } from './mapBuild';
+import { LOFT_LAYOUT, LOFT_ERRANDS } from '@/assets/maps/loft.layout';
+import { buildMap, type PropPlacement } from './mapBuild';
 import { FURNITURE } from './furniture';
+import { PROP_SIZE } from './props';
 import { seatZoneFor, type SeatAgent } from './seatZones';
 
 /** Theme identifiers. Only `office` exists in Phase 0; the five TV-show themes
@@ -48,9 +49,12 @@ export interface Tile { x: number; y: number; }
 export type Facing = 'up' | 'down' | 'left' | 'right';
 
 /** Kinds of small idle errands around the office (incl. plant watering).
- *  'smoke' is the boss special: cigar at the open window, god only. */
+ *  'smoke' is the boss special: cigar at the open window, god only. The loft
+ *  adds the lounge's 'bong' (grind, then smoke), 'gaming', 'console', and the
+ *  boss's 'nap' in his bed. */
 export type ErrandKind =
-  | 'water' | 'window' | 'dispenser' | 'fridge' | 'shelf' | 'bin' | 'smoke';
+  | 'water' | 'window' | 'dispenser' | 'fridge' | 'shelf' | 'bin' | 'smoke'
+  | 'bong' | 'gaming' | 'console' | 'nap';
 
 /** One idle-errand anchor: a stand tile + facing, an `fx` tile for the ambient
  *  animation, a duration, and an optional god-only restriction. */
@@ -61,6 +65,8 @@ export interface ErrandSpot {
   fx: Tile;
   duration: number;
   godOnly?: boolean;
+  /** Sit at the stand tile instead of standing (gaming chair, floor, bed). */
+  seated?: boolean;
 }
 
 /** One tileset atlas + its placement in the global gid space. `embedded` marks
@@ -147,6 +153,8 @@ export interface ThemeConfig {
   /** Zoned maps: the zone an agent's desk should be in (seats are named
    *  `<zone>-seat-N`). Unset = desks are claimed in order. */
   seatZoneFor?: (agent: SeatAgent) => string | undefined;
+  /** Things drawn in code on top of the tiles (props.ts), sized by the builder. */
+  props?: PropPlacement[];
 }
 
 /** The existing office, expressed as a theme. Values are copied verbatim from
@@ -299,7 +307,7 @@ export const BROOKLYN99_THEME: ThemeConfig = {
  *  layout (assets/maps/loft.layout.ts) rather than a hand-painted .tmj, so a
  *  room's contents change with a one-line edit. Same tiles, monitor and cast as
  *  the office; desks are zoned by department (seatZones.ts). */
-const loftBuild = buildMap(LOFT_LAYOUT, FURNITURE, (JSON.parse(officeMapRaw) as { tilesets: unknown[] }).tilesets);
+const loftBuild = buildMap(LOFT_LAYOUT, FURNITURE, (JSON.parse(officeMapRaw) as { tilesets: unknown[] }).tilesets, PROP_SIZE);
 if (loftBuild.problems.length) console.warn('[loft] layout problems:', loftBuild.problems);
 
 export const LOFT_THEME: ThemeConfig = {
@@ -328,28 +336,12 @@ export const LOFT_THEME: ThemeConfig = {
     clock: { x: 30, y: 1 },     // left of his window; clicking it is clocking out
     ask: { x: 35, y: 10 },      // on the wall under Theo's office, right of his door
   },
-  errandSpots: [
-    // plants
-    { kind: 'water', stand: { x: 21, y: 6 }, facing: 'right', fx: { x: 22, y: 6 }, duration: 4.5 },
-    { kind: 'water', stand: { x: 11, y: 13 }, facing: 'up', fx: { x: 11, y: 12 }, duration: 4.5 },
-    { kind: 'water', stand: { x: 20, y: 13 }, facing: 'right', fx: { x: 21, y: 13 }, duration: 4.5 },
-    { kind: 'water', stand: { x: 11, y: 20 }, facing: 'up', fx: { x: 11, y: 19 }, duration: 4.5 },
-    { kind: 'water', stand: { x: 21, y: 20 }, facing: 'right', fx: { x: 22, y: 20 }, duration: 4.5 },
-    // Theo's office: his plant and the cigar at his window
-    { kind: 'water', stand: { x: 37, y: 3 }, facing: 'right', fx: { x: 38, y: 3 }, duration: 4.5, godOnly: true },
-    { kind: 'smoke', stand: { x: 31, y: 3 }, facing: 'up', fx: { x: 31, y: 1 }, duration: 18, godOnly: true },
-    // the library's shelves
-    { kind: 'shelf', stand: { x: 10, y: 4 }, facing: 'up', fx: { x: 9, y: 2 }, duration: 4 },
-    { kind: 'shelf', stand: { x: 16, y: 4 }, facing: 'up', fx: { x: 15, y: 2 }, duration: 4 },
-    // kitchen: water cooler, fridge, bin
-    { kind: 'dispenser', stand: { x: 34, y: 22 }, facing: 'right', fx: { x: 35, y: 21 }, duration: 3.5 },
-    { kind: 'fridge', stand: { x: 31, y: 22 }, facing: 'up', fx: { x: 31, y: 21 }, duration: 3.2 },
-    { kind: 'bin', stand: { x: 37, y: 24 }, facing: 'right', fx: { x: 38, y: 23 }, duration: 2.6 },
-  ],
+  errandSpots: LOFT_ERRANDS,
   monitor: OFFICE_THEME.monitor,
   palette: OFFICE_THEME.palette,
   cast: OFFICE_THEME.cast,
   seatZoneFor,
+  props: loftBuild.props,
 };
 
 /** All registered themes. Phase 0 ships only the office; show themes register

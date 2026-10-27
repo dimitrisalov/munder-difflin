@@ -53,9 +53,16 @@ export interface Layout {
   rooms: Room[];
   zones: Array<Rect & { name: string }>;
   items: Placement[];
+  /** Things the floor draws in code (props.ts) rather than from tiles: the
+   *  bong, the console, Theo's bed… The builder blocks their footprint, unless
+   *  `onTop` (on a table or counter that already blocks) or `walkable` (lies
+   *  flat on the floor, like a bed someone can lie in). */
+  props?: PropPlacement[];
   /** Extra named points (entrance, café stands, …). */
   points: Array<{ name: string; x: number; y: number }>;
 }
+
+export interface PropPlacement { kind: string; x: number; y: number; w?: number; h?: number; onTop?: boolean; walkable?: boolean }
 
 export interface BuiltMap {
   width: number;
@@ -166,11 +173,20 @@ function stampSize(s: Stamp): { w: number; h: number } {
   };
 }
 
-export interface BuildResult { map: BuiltMap; seats: Array<{ name: string; zone: string; x: number; y: number }>; problems: string[] }
+export interface BuildResult {
+  map: BuiltMap;
+  seats: Array<{ name: string; zone: string; x: number; y: number }>;
+  props: PropPlacement[];
+  problems: string[];
+}
 
 /** Build the map. `tilesets` is copied verbatim into the result (the office
- *  map's: embedded office sheet @1, a5 @513, interiors @1025). */
-export function buildMap(layout: Layout, stamps: Record<string, Stamp>, tilesets: unknown[]): BuildResult {
+ *  map's: embedded office sheet @1, a5 @513, interiors @1025). `propSizes`
+ *  (props.ts PROP_SIZE) sizes the props and flags unknown kinds. */
+export function buildMap(
+  layout: Layout, stamps: Record<string, Stamp>, tilesets: unknown[],
+  propSizes?: Record<string, { w: number; h: number }>,
+): BuildResult {
   const p = new Painter(layout.width, layout.height);
   const problems: string[] = [];
   paintFloor(p, { x0: 0, y0: 0, x1: p.w - 1, y1: p.h - 1 }, layout.floor.base);
@@ -214,6 +230,27 @@ export function buildMap(layout: Layout, stamps: Record<string, Stamp>, tilesets
       const zone = pl.zone ?? zoneAt(x, y);
       seatCount[zone] = (seatCount[zone] ?? 0) + 1;
       seats.push({ name: pl.seat ?? `${zone}-seat-${seatCount[zone]}`, zone, x, y });
+    }
+  }
+
+  const props: PropPlacement[] = [];
+  for (const pr of layout.props ?? []) {
+    const size = propSizes?.[pr.kind];
+    if (propSizes && !size) { problems.push(`unknown prop "${pr.kind}" at ${pr.x},${pr.y}`); continue; }
+    const w = pr.w ?? size?.w ?? 1, h = pr.h ?? size?.h ?? 1;
+    if (pr.x < 0 || pr.y < 0 || pr.x + w > p.w || pr.y + h > p.h) { problems.push(`prop ${pr.kind} at ${pr.x},${pr.y} does not fit the map`); continue; }
+    props.push({ ...pr, w, h });
+    if (pr.onTop) continue;
+    for (let dy = 0; dy < h; dy++) {
+      for (let dx = 0; dx < w; dx++) {
+        const x = pr.x + dx, y = pr.y + dy, k = `${x},${y}`;
+        const prev = occupied.get(k);
+        if (prev) problems.push(`prop ${pr.kind} at ${pr.x},${pr.y} overlaps ${prev} at ${k}`);
+        if (p.get(p.walls, x, y)) problems.push(`prop ${pr.kind} at ${pr.x},${pr.y} is inside a wall at ${k}`);
+        if (pr.walkable) continue;
+        occupied.set(k, `${pr.kind}@${pr.x},${pr.y}`);
+        p.put(p.block, x, y, 1);
+      }
     }
   }
 
@@ -282,5 +319,5 @@ export function buildMap(layout: Layout, stamps: Record<string, Stamp>, tilesets
     version: '1.10', tiledversion: '1.10.2', nextlayerid: id, nextobjectid: oid,
     layers, tilesets,
   };
-  return { map, seats, problems };
+  return { map, seats, props, problems };
 }

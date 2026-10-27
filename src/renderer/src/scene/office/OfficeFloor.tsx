@@ -12,6 +12,10 @@ import { MessageEnvelope, type MessageAct } from './MessageEnvelope';
 import { hexToNumber, DEFAULT_CHARACTER } from './cast';
 import { pickSoloLine, pickExchange, type BreakSpot } from './cafeteriaLines';
 import { freeSeatInZone } from './seatZones';
+import {
+  drawProp, idleAnimated, FLAT_PROPS, GRIND_SECONDS,
+  drawBongSession, drawGamingSession, drawConsoleSession, drawNap,
+} from './props';
 import { colors } from '@/design/tokens';
 import { loadTheme, resolveThemeMap, themeTilesetUrls } from './themeLoader';
 import {
@@ -92,8 +96,15 @@ const ERRAND_THOUGHTS: Record<ErrandKind, readonly string[]> = {
   fridge:    ['office.errand.fridge.0', 'office.errand.fridge.1', 'office.errand.fridge.2'],
   shelf:     ['office.errand.shelf.0', 'office.errand.shelf.1', 'office.errand.shelf.2'],
   bin:       ['office.errand.bin.0', 'office.errand.bin.1', 'office.errand.bin.2'],
-  smoke:     ['office.errand.smoke.0', 'office.errand.smoke.1', 'office.errand.smoke.2', 'office.errand.smoke.3']
+  smoke:     ['office.errand.smoke.0', 'office.errand.smoke.1', 'office.errand.smoke.2', 'office.errand.smoke.3'],
+  bong:      ['office.errand.bong.0', 'office.errand.bong.1', 'office.errand.bong.2'],
+  gaming:    ['office.errand.gaming.0', 'office.errand.gaming.1', 'office.errand.gaming.2'],
+  console:   ['office.errand.console.0', 'office.errand.console.1', 'office.errand.console.2'],
+  nap:       ['office.errand.nap.0', 'office.errand.nap.1', 'office.errand.nap.2']
 };
+
+/** The bong errand grinds first; once it's ground, the thought changes. */
+const BONG_HIT_THOUGHTS: readonly string[] = ['office.errand.bongHit.0', 'office.errand.bongHit.1', 'office.errand.bongHit.2'];
 
 /** What workers blurt out when the boss walks by — performative excellence.
  *  `{{done}}` interpolates that worker's REAL done-task count. */
@@ -803,6 +814,25 @@ export function OfficeFloor() {
         startBreak(agent.id, rt);
       };
 
+      // ─── Code-drawn props (props.ts): the bong, the console, Theo's bed… ───
+      // Standing ones sort by their bottom edge like furniture would; flat
+      // ones (a bed) sit under whoever stands on them.
+      const animatedProps: Array<{ kind: string; g: Graphics }> = [];
+      for (const pr of theme.props ?? []) {
+        const g = new Graphics();
+        g.eventMode = 'none';
+        g.position.set(pr.x * ts0, pr.y * ts0);
+        g.zIndex = FLAT_PROPS.has(pr.kind) ? pr.y * ts0 : (pr.y + (pr.h ?? 1)) * ts0;
+        drawProp(pr.kind, g);
+        charLayer.addChild(g);
+        if (idleAnimated(pr.kind)) animatedProps.push({ kind: pr.kind, g });
+      }
+      let propClock = 0;
+      const updateProps = (dt: number): void => {
+        propClock += dt;
+        for (const p of animatedProps) drawProp(p.kind, p.g, propClock);
+      };
+
       // ─── Idle errands: small purposeful busywork for a quiet floor ─────────
       // Plants get watered, windows opened for a breeze, the dispenser poured,
       // the fridge inspected, the shelf browsed, scrap paper binned. Every spot
@@ -852,6 +882,14 @@ export function OfficeFloor() {
           const ph = (t * 0.5) % 1;
           g.rect(2 + ph * 24, 4 + (Math.floor(t * 0.5) % 3) * 9, 2, 2)
             .fill({ color: 0xfff7c8, alpha: 0.8 * Math.sin(ph * Math.PI) });
+        } else if (kind === 'bong') {
+          drawBongSession(g, t);
+        } else if (kind === 'gaming') {
+          drawGamingSession(g, t);
+        } else if (kind === 'console') {
+          drawConsoleSession(g, t);
+        } else if (kind === 'nap') {
+          drawNap(g, t);
         } else if (kind === 'bin') {
           // a paper ball arcing in from the agent's side, once per second
           const ph = (t * 1.0) % 1;
@@ -889,10 +927,17 @@ export function OfficeFloor() {
           // doing: animate the spot; watering + smoking complete via their
           // own Character callbacks, the rest by this timer
           drawErrandFx(spot.kind, fxFor(err.idx), err.timer);
+          // the grinding's done: on to the bong
+          if (spot.kind === 'bong' && err.timer >= GRIND_SECONDS && err.timer - dt < GRIND_SECONDS) {
+            rt.character.showThought(t(BONG_HIT_THOUGHTS[Math.floor(Math.random() * BONG_HIT_THOUGHTS.length)]));
+          }
           if (spot.kind !== 'water' && spot.kind !== 'smoke' && err.timer >= spot.duration) {
+            // the boss's timed errands (his nap) end back at his desk
+            const wasGod = !!agentById(errandTaken[err.idx] ?? '')?.isGod;
             releaseErrand(rt);
             rt.character.hideThought();
-            rt.character.startWandering();
+            if (wasGod) rt.character.sitAtDesk(true);
+            else rt.character.startWandering();
           }
         }
         errCooldown -= dt;
@@ -931,7 +976,8 @@ export function OfficeFloor() {
           if (!rt!.err || rt!.err.idx !== idx) return;
           rt!.err.phase = 'doing';
           rt!.err.timer = 0;
-          c.faceDirection(spot.facing);
+          if (spot.seated) c.sitInPlace(spot.facing);
+          else c.faceDirection(spot.facing);
           const lines = ERRAND_THOUGHTS[spot.kind];
           c.showThought(t(lines[Math.floor(Math.random() * lines.length)]));
           const finish = (): void => {
@@ -1704,6 +1750,7 @@ export function OfficeFloor() {
         updateCafeteria(dt);
         updateCoffeeRuns(dt);
         updateErrands(dt);
+        updateProps(dt);
         updateBossAura(dt);
         updateDeskLife(dt);
         updateBoardMoves(dt);

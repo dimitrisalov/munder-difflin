@@ -7,10 +7,14 @@
 // table, the dev corner, the guest desks for temps. Bottom: the lounge, the
 // reception by the door, the kitchen.
 //
-// To change what is in a room, edit `items` (x, y = the item's top-left tile).
-// The builder checks that nothing overlaps and every seat is reachable.
+// To change what is in a room, edit `items` (tiles from the bundled sheets) or
+// `props` (things drawn in code: the bong, the console, Theo's bed); x, y = the
+// top-left tile. What agents do around the room is in LOFT_ERRANDS below. The
+// builder checks that nothing overlaps and every seat is reachable; the map
+// test also walks to every errand spot.
 
 import type { Layout } from '../../scene/office/mapBuild';
+import type { ErrandSpot } from '../../scene/office/themeRegistry';
 
 const FLOOR = {
   sage: 783, beige: 777, cream: 781, gray: 779, teal: 813, blueDiamond: 809,
@@ -129,6 +133,22 @@ export const LOFT_LAYOUT: Layout = {
     { item: 'bin', x: 38, y: 23 },
     { item: 'plant-leafy', x: 26, y: 24 },
   ],
+  props: [
+    // lounge: grinder and bong on the coffee table, the console beside the TV
+    // (not under it: that tile is the way into the gaming corner), the gaming
+    // PC's tower on the gaming desk
+    { kind: 'grinder', x: 5, y: 21, onTop: true },
+    { kind: 'bong', x: 6, y: 21, onTop: true },
+    { kind: 'console', x: 10, y: 19 },
+    { kind: 'gaming-pc', x: 9, y: 21 },
+    // Theo's office: his bed, scratching post and bowl
+    { kind: 'cat-bed', x: 37, y: 7, walkable: true },
+    { kind: 'scratching-post', x: 30, y: 6 },
+    { kind: 'food-bowl', x: 30, y: 8 },
+    // the bell on the reception counter, an easel in the studio
+    { kind: 'bell', x: 18, y: 20, onTop: true },
+    { kind: 'easel', x: 9, y: 9 },
+  ],
   points: [
     { name: 'entrance', x: 19, y: 24 },
     { name: 'cafe-seat-1', x: 30, y: 23 }, { name: 'cafe-seat-2', x: 33, y: 23 },
@@ -137,3 +157,29 @@ export const LOFT_LAYOUT: Layout = {
     { name: 'cafe-stand-vending', x: 33, y: 22 },
   ],
 };
+
+/** What agents do around the loft when idle: stand on `stand` facing `facing`
+ *  (or sit there, `seated`), with a small animation on the `fx` tile. */
+export const LOFT_ERRANDS: ErrandSpot[] = [
+  // plants
+  { kind: 'water', stand: { x: 21, y: 6 }, facing: 'right', fx: { x: 22, y: 6 }, duration: 4.5 },
+  { kind: 'water', stand: { x: 11, y: 13 }, facing: 'up', fx: { x: 11, y: 12 }, duration: 4.5 },
+  { kind: 'water', stand: { x: 20, y: 13 }, facing: 'right', fx: { x: 21, y: 13 }, duration: 4.5 },
+  { kind: 'water', stand: { x: 11, y: 20 }, facing: 'up', fx: { x: 11, y: 19 }, duration: 4.5 },
+  { kind: 'water', stand: { x: 21, y: 20 }, facing: 'right', fx: { x: 22, y: 20 }, duration: 4.5 },
+  // Theo's office: his plant, the cigar at his window, a nap in his bed
+  { kind: 'water', stand: { x: 37, y: 3 }, facing: 'right', fx: { x: 38, y: 3 }, duration: 4.5, godOnly: true },
+  { kind: 'smoke', stand: { x: 31, y: 3 }, facing: 'up', fx: { x: 31, y: 1 }, duration: 18, godOnly: true },
+  { kind: 'nap', stand: { x: 37, y: 7 }, facing: 'down', seated: true, fx: { x: 37, y: 6 }, duration: 16, godOnly: true },
+  // the library's shelves
+  { kind: 'shelf', stand: { x: 10, y: 4 }, facing: 'up', fx: { x: 9, y: 2 }, duration: 4 },
+  { kind: 'shelf', stand: { x: 16, y: 4 }, facing: 'up', fx: { x: 15, y: 2 }, duration: 4 },
+  // lounge: grind then smoke at the coffee table, a game on the PC, the console
+  { kind: 'bong', stand: { x: 5, y: 20 }, facing: 'down', fx: { x: 5, y: 21 }, duration: 9 },
+  { kind: 'gaming', stand: { x: 10, y: 23 }, facing: 'up', seated: true, fx: { x: 9, y: 21 }, duration: 14 },
+  { kind: 'console', stand: { x: 9, y: 20 }, facing: 'up', seated: true, fx: { x: 8, y: 18 }, duration: 14 },
+  // kitchen: water cooler, fridge, bin
+  { kind: 'dispenser', stand: { x: 34, y: 22 }, facing: 'right', fx: { x: 35, y: 21 }, duration: 3.5 },
+  { kind: 'fridge', stand: { x: 31, y: 22 }, facing: 'up', fx: { x: 31, y: 21 }, duration: 3.2 },
+  { kind: 'bin', stand: { x: 37, y: 24 }, facing: 'right', fx: { x: 38, y: 23 }, duration: 2.6 },
+];
