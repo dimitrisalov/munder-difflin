@@ -372,6 +372,8 @@ export interface HarnessConfig {
   workSwitchClear?: { enabled: boolean; minSessionMinutes: number; minContextTokens: number };
   /** Temps any agent may start (mirrors main/temps.ts). */
   temps?: { enabled: boolean; maxPerAgent: number; maxTotal: number; tokenCap: number };
+  /** Folder of hire templates (mirrors main config). */
+  hireTemplatesDir?: string;
   autoDeliveryPausedAgents?: string[];
   maxTurns?: number;
   circuitBreaker?: CircuitBreakerConfig;
@@ -1012,6 +1014,19 @@ const api = {
     error?: string;
   }> =>
     ipcRenderer.invoke('hire:openFile'),
+  /** Export an agent as a hire file (save dialog). `dropped` lists what did
+   *  not fit the shareable spec and was left out. */
+  exportAgentHire: (agent: {
+    id: string; name: string; description?: string; goal?: string; character?: string;
+    accent?: string; provider?: string; model?: string; command?: string; isolate?: boolean;
+  }): Promise<{ ok: boolean; path?: string; error?: string; dropped: string[] }> =>
+    ipcRenderer.invoke('hire:exportAgent', agent),
+  /** The hire template library: valid manifests in the chosen folder. */
+  listHireTemplates: (): Promise<{ dir: string | null; templates: { file: string; manifest: HireManifest }[]; errors: string[] }> =>
+    ipcRenderer.invoke('hire:listTemplates'),
+  /** Pick the template folder, remember it, and list it. */
+  pickHireTemplatesDir: (): Promise<{ ok: boolean; dir?: string; error?: string; templates?: { file: string; manifest: HireManifest }[]; errors?: string[] }> =>
+    ipcRenderer.invoke('hire:pickTemplatesDir'),
 
   // ─── Config changes ──────────────────────────────────────────────────────
   /** Fired whenever a setting is saved, with the full updated config. */

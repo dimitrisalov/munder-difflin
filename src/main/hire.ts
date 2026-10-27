@@ -5,10 +5,10 @@
  * security model. Deliberately free of any `electron` import so it can be
  * smoke-tested as a plain Node module (mirrors webhook.ts's approach).
  */
-import { readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { lookup } from 'node:dns/promises';
 import { BlockList, isIP } from 'node:net';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   HIRE_MAX_BYTES,
   isAllowedManifestUrl,
@@ -270,4 +270,27 @@ export function readHireManifestFiles(paths: readonly string[]): {
     }
   }
   return { manifests, errors };
+}
+
+/** The hire template library (wave 3): every `*.json` directly in `dir`,
+ *  validated like a file import. Bounded to the first 100 files by name, so a
+ *  wrong folder pick cannot stall the modal. */
+export function listHireTemplates(dir: string): {
+  templates: { file: string; manifest: HireManifest }[];
+  errors: string[];
+} {
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter((f) => f.toLowerCase().endsWith('.json')).sort().slice(0, 100);
+  } catch (e) {
+    return { templates: [], errors: [`could not read the folder: ${e instanceof Error ? e.message : String(e)}`] };
+  }
+  const templates: { file: string; manifest: HireManifest }[] = [];
+  const errors: string[] = [];
+  for (const file of files) {
+    const r = readHireManifestFile(join(dir, file));
+    if (r.ok) templates.push({ file, manifest: r.manifest });
+    else errors.push(`${file}: ${r.error.split(join(dir, file)).join(file)}`);
+  }
+  return { templates, errors };
 }

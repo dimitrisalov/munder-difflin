@@ -246,6 +246,19 @@ export function AddAgentModal({ onClose, config, onConfigChange }: AddAgentModal
   const [busy, setBusy] = useState(false);
   // Which config section the left sidebar index is showing.
   const [section, setSection] = useState<SectionKey>('identity');
+  // Hire template library (wave 3): a folder of *.hire.json, one click to prefill.
+  const [templates, setTemplates] = useState<{ dir: string | null; list: { file: string; manifest: HireManifest }[]; skipped: number }>(
+    { dir: null, list: [], skipped: 0 }
+  );
+  useEffect(() => {
+    window.cth.listHireTemplates()
+      .then((r) => setTemplates({ dir: r.dir, list: r.templates, skipped: r.errors.length }))
+      .catch(() => { /* main not ready */ });
+  }, []);
+  const pickTemplatesDir = async () => {
+    const r = await window.cth.pickHireTemplatesDir();
+    if (r.ok) setTemplates({ dir: r.dir ?? null, list: r.templates ?? [], skipped: r.errors?.length ?? 0 });
+  };
   // "Generate a hire with AI" helper — reveals a copy-paste prompt (item 7).
   const [showHirePrompt, setShowHirePrompt] = useState(false);
   const [copiedPrompt, setCopiedPrompt] = useState(false);
@@ -1113,6 +1126,33 @@ export function AddAgentModal({ onClose, config, onConfigChange }: AddAgentModal
                   {showHirePrompt ? tr('addAgent.hideAIPrompt') : tr('addAgent.generateWithAI')}
                 </button>
               </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: 'var(--cth-ink-700)' }}>{tr('addAgent.templates')}</span>
+                {templates.list.map((tpl) => (
+                  <button
+                    key={tpl.file}
+                    onClick={() => { setError(undefined); enqueuePendingHires([tpl.manifest]); }}
+                    disabled={busy}
+                    title={tpl.manifest.description ?? tpl.file}
+                    style={templateChipStyle}
+                  >
+                    {tpl.manifest.name}
+                  </button>
+                ))}
+                {templates.dir && templates.list.length === 0 && (
+                  <span style={{ fontSize: 12, color: 'var(--cth-ink-500)' }}>{tr('addAgent.templatesEmpty')}</span>
+                )}
+                <button
+                  onClick={() => { void pickTemplatesDir(); }}
+                  title={templates.dir ?? tr('addAgent.templatesPickTitle')}
+                  style={{ ...templateChipStyle, background: 'transparent' }}
+                >
+                  {templates.dir ? tr('addAgent.templatesChange') : tr('addAgent.templatesPick')}
+                </button>
+                {templates.skipped > 0 && (
+                  <span style={{ fontSize: 12, color: 'var(--cth-ink-500)' }}>{tr('addAgent.templatesSkipped', { count: templates.skipped })}</span>
+                )}
+              </div>
               {showHirePrompt && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <span style={{ fontSize: 12, color: 'var(--cth-ink-500)', lineHeight: '16px' }}>
@@ -1190,3 +1230,9 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     </label>
   );
 }
+
+const templateChipStyle: CSSProperties = {
+  padding: '2px 8px 1px', border: 'none', cursor: 'pointer',
+  background: 'var(--cth-paper-100)', boxShadow: 'inset 0 0 0 1px var(--cth-ink-100)',
+  fontFamily: 'var(--cth-font-ui)', fontSize: 12, color: 'var(--cth-ink-900)'
+};

@@ -76,7 +76,8 @@ import { ControlRegistry } from './control';
 import { WorkerWakeWatchdog, WORKER_WAKE_REPORT_MS, activityEvidenceAt, type WorkerWakeFacts } from './workerWake';
 import { inboxNudgeText } from '../shared/hiveNudge';
 import { resolveGodName } from '../shared/godIdentity';
-import { fetchHireManifest, readHireManifestFiles } from './hire';
+import { fetchHireManifest, readHireManifestFiles, listHireTemplates } from './hire';
+import { buildHireManifest, hireFileName, serializeHire } from '../shared/hireExport';
 import { parseHireDeepLink, type HireManifest } from '../shared/hire';
 import { ClosingTimeController } from './closingTime';
 import {
@@ -3040,6 +3041,64 @@ ipcMain.handle('hire:drainPending', () => {
   rendererReadyForHires = true;
   const out = pendingHires.splice(0, pendingHires.length);
   return out;
+});
+
+// ─── Hire templates: export an agent, list a template folder (wave 3) ───────
+// Export writes a `munder-difflin/hire@1` file built by shared/hireExport.ts and
+// validated like an import. The template library is a plain folder of such
+// files (on the office PC: the ai-office repo's agents/hires), picked once.
+
+interface ExportAgentPayload {
+  id?: unknown; name?: unknown; description?: unknown; goal?: unknown; character?: unknown;
+  accent?: unknown; provider?: unknown; model?: unknown; command?: unknown; isolate?: unknown;
+}
+
+ipcMain.handle('hire:exportAgent', async (_evt, payload: unknown) => {
+  const p = (payload ?? {}) as ExportAgentPayload;
+  const s = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+  const id = s(p.id) ?? '';
+  const cfg = readConfig();
+  const built = buildHireManifest({
+    name: s(p.name) ?? '',
+    description: s(p.description),
+    goal: s(p.goal),
+    character: s(p.character),
+    accent: s(p.accent),
+    provider: s(p.provider),
+    model: s(p.model),
+    command: s(p.command),
+    isolate: p.isolate === true,
+    capabilities: id ? hive.registry().agents[id]?.capabilities : undefined,
+    tokenCap: id ? cfg.agentTokenCaps?.[id] : undefined
+  });
+  if (!built.ok || !built.manifest) return { ok: false, error: built.errors.join('; ') || 'could not build the manifest', dropped: built.dropped };
+  const dir = cfg.hireTemplatesDir && existsSync(cfg.hireTemplatesDir) ? cfg.hireTemplatesDir : app.getPath('documents');
+  const res = await dialog.showSaveDialog({
+    title: 'Export agent as a hire file',
+    defaultPath: join(dir, hireFileName(built.manifest.name)),
+    filters: [{ name: 'Hire manifest', extensions: ['json'] }]
+  });
+  if (res.canceled || !res.filePath) return { ok: false, error: 'cancelled', dropped: built.dropped };
+  try {
+    writeFileSync(res.filePath, serializeHire(built.manifest), 'utf8');
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e), dropped: built.dropped };
+  }
+  return { ok: true, path: res.filePath, dropped: built.dropped };
+});
+
+ipcMain.handle('hire:listTemplates', () => {
+  const dir = readConfig().hireTemplatesDir;
+  if (!dir) return { dir: null, templates: [], errors: [] };
+  return { dir, ...listHireTemplates(dir) };
+});
+
+ipcMain.handle('hire:pickTemplatesDir', async () => {
+  const res = await dialog.showOpenDialog({ title: 'Hire templates folder', properties: ['openDirectory'] });
+  if (res.canceled || res.filePaths.length === 0) return { ok: false, error: 'cancelled' };
+  const dir = res.filePaths[0];
+  writeConfig({ hireTemplatesDir: dir });
+  return { ok: true, dir, ...listHireTemplates(dir) };
 });
 
 // IPC: "import hires…" file picker in the Add-Agent modal. Every selected file

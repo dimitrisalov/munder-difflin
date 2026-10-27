@@ -592,7 +592,7 @@
     "setUpMacMini": "أعِدّه على جهاز Mac Mini",
     "command": "الأمر",
     "commandAuto": "الأمر (الوضع التلقائي مفعّل)",
-    "templates": "القوالب",
+    "templates": "القوالب:",
     "templatesHint": {
       "repoJanitor": {
         "label": "مُنظِّف المستودع"
@@ -629,7 +629,19 @@
     "errFolder": "اختر مجلدًا أولًا",
     "errCommand": "الأمر مطلوب",
     "hireProgress": "التعيين {{current}} من {{total}}",
-    "skipHire": "تخطَّ التعيين"
+    "skipHire": "تخطَّ التعيين",
+    "templatesEmpty": "لا توجد ملفات توظيف في هذا المجلد",
+    "templatesPick": "اختر مجلدًا…",
+    "templatesChange": "المجلد…",
+    "templatesPickTitle": "مجلد ملفات ‎.hire.json‎ لعرضها هنا، مثل ai-office/agents/hires",
+    "templatesSkipped": "تم تخطي {{count}} ملفات غير صالحة"
+  },
+  "editAgent": {
+    "export": "تصدير الدور…",
+    "exportTitle": "احفظ هذا الوكيل كملف توظيف يمكن لمكتب آخر استيراده",
+    "exported": "تم الحفظ في {{path}}.",
+    "exportDropped": "لم يُضمَّن (غير قابل للمشاركة): {{list}}.",
+    "exportFailed": "فشل التصدير: {{error}}"
   },
   "onboarding": {
     "titles": {

@@ -592,7 +592,7 @@
     "setUpMacMini": "set up on a Mac Mini",
     "command": "Command",
     "commandAuto": "Command (auto mode on)",
-    "templates": "Templates",
+    "templates": "Templates:",
     "templatesHint": {
       "repoJanitor": {
         "label": "Repo janitor"
@@ -629,7 +629,19 @@
     "errFolder": "Pick a folder first",
     "errCommand": "Command is required",
     "hireProgress": "hire {{current}} of {{total}}",
-    "skipHire": "skip hire"
+    "skipHire": "skip hire",
+    "templatesEmpty": "no hire files in this folder",
+    "templatesPick": "choose folder…",
+    "templatesChange": "folder…",
+    "templatesPickTitle": "A folder of .hire.json files to offer here, e.g. ai-office/agents/hires",
+    "templatesSkipped": "{{count}} invalid skipped"
+  },
+  "editAgent": {
+    "export": "export role…",
+    "exportTitle": "Save this agent as a hire file another office can import",
+    "exported": "Saved to {{path}}.",
+    "exportDropped": "Left out (not shareable): {{list}}.",
+    "exportFailed": "Export failed: {{error}}"
   },
   "onboarding": {
     "titles": {

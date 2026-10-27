@@ -1,4 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
 import { PixelPanel } from './PixelPanel';
 import { PixelButton } from './PixelButton';
 import { SpritePortrait } from './SpritePortrait';
@@ -30,8 +31,10 @@ export interface EditAgentModalProps {
  * via updateAgent (engine changes apply on the next restart).
  */
 export function EditAgentModal({ agent, onClose }: EditAgentModalProps) {
+  const { t } = useTranslation();
   const updateAgent = useStore((s) => s.updateAgent);
   const [config, setConfig] = useState<HarnessConfig | null>(null);
+  const [exportNote, setExportNote] = useState<string | undefined>();
 
   const [name, setName] = useState(agent.name);
   const [character, setCharacter] = useState<OfficeCharacterName>(agent.character);
@@ -89,6 +92,29 @@ export function EditAgentModal({ agent, onClose }: EditAgentModalProps) {
       goal: trimmedGoal || undefined
     });
     onClose();
+  };
+
+  // Export the role as it stands in the form, so unsaved edits travel too.
+  const exportHire = async () => {
+    setExportNote(undefined);
+    const r = await window.cth.exportAgentHire({
+      id: agent.id,
+      name: name.trim() || agent.name,
+      description: description.trim(),
+      goal: goal.trim(),
+      character,
+      accent,
+      provider,
+      model,
+      command: config ? buildSpawnCommand(config, model, provider) : agent.command,
+      isolate: !!agent.worktreePath
+    });
+    if (r.ok) {
+      const left = r.dropped.length ? ` ${t('editAgent.exportDropped', { list: r.dropped.join(', ') })}` : '';
+      setExportNote(`${t('editAgent.exported', { path: r.path })}${left}`);
+    } else if (r.error !== 'cancelled') {
+      setExportNote(t('editAgent.exportFailed', { error: r.error }));
+    }
   };
 
   return (
@@ -280,8 +306,14 @@ export function EditAgentModal({ agent, onClose }: EditAgentModalProps) {
               </div>
             </div>
 
+            {exportNote && (
+              <div style={{ fontSize: 12, lineHeight: '16px', color: 'var(--cth-ink-700)', wordBreak: 'break-word' }}>{exportNote}</div>
+            )}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
               <PixelButton variant="ghost" size="md" onClick={onClose}>cancel</PixelButton>
+              <PixelButton variant="secondary" size="md" onClick={() => { void exportHire(); }} title={t('editAgent.exportTitle')}>
+                {t('editAgent.export')}
+              </PixelButton>
               <div style={{ flex: 1 }} />
               <PixelButton variant="primary" size="md" onClick={save}>save changes</PixelButton>
             </div>

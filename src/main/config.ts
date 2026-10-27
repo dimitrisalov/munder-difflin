@@ -267,6 +267,9 @@ export interface HarnessConfig {
    *  agents/<id>/temps/ folder, within these limits. Off by default; read
    *  through temps-core.cjs's sanitizeTempsConfig, never raw. */
   temps?: TempsConfig;
+  /** Folder of hire templates (`*.hire.json`) offered in Add Agent and used as
+   *  the default place to export an agent to (wave 3). Unset = none. */
+  hireTemplatesDir?: string;
   /** Agent ids whose automatic inbox/queue delivery is paused. Pending messages
    *  stay durable until the operator explicitly resumes delivery. */
   autoDeliveryPausedAgents?: string[];

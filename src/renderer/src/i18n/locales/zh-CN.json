@@ -592,7 +592,7 @@
     "setUpMacMini": "在 Mac Mini 上配置",
     "command": "命令",
     "commandAuto": "命令（自动模式已开）",
-    "templates": "模板",
+    "templates": "模板：",
     "templatesHint": {
       "repoJanitor": {
         "label": "仓库清洁工"
@@ -629,7 +629,19 @@
     "errFolder": "请先选择文件夹",
     "errCommand": "必须填写命令",
     "hireProgress": "hire 第 {{current}} / {{total}} 项",
-    "skipHire": "跳过 hire"
+    "skipHire": "跳过 hire",
+    "templatesEmpty": "此文件夹中没有 hire 文件",
+    "templatesPick": "选择文件夹…",
+    "templatesChange": "文件夹…",
+    "templatesPickTitle": "在此提供的 .hire.json 文件夹，例如 ai-office/agents/hires",
+    "templatesSkipped": "已跳过 {{count}} 个无效文件"
+  },
+  "editAgent": {
+    "export": "导出角色…",
+    "exportTitle": "将此智能体保存为其他办公室可导入的 hire 文件",
+    "exported": "已保存到 {{path}}。",
+    "exportDropped": "未包含（不可共享）：{{list}}。",
+    "exportFailed": "导出失败：{{error}}"
   },
   "onboarding": {
     "titles": {
