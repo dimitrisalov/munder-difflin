@@ -21,6 +21,7 @@ import { OfficeThemePicker } from './OfficeThemePicker';
 import { McpDefaultsSettings } from './McpDefaultsSettings';
 import { IntegrationsRegistry } from './IntegrationsRegistry';
 import { AiEnginesSettings } from './AiEnginesSettings';
+import { TelegramSettings } from './TelegramSettings';
 import { REALTIME_MODEL } from '@shared/realtimePricing';
 import { RealtimeDevicePicker } from '@/realtime/DevicePicker';
 import { CostHud } from '@/realtime/CostHud';
@@ -1610,6 +1611,11 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
                           </div>
                         )}
                       </div>
+
+                      <div style={sectionRule} />
+
+                      {/* Telegram — the owner's phone ↔ the orchestrator, long polling, no tunnel. */}
+                      <TelegramSettings godName={godName} />
 
                       <div style={sectionRule} />
 

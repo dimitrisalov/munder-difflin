@@ -150,6 +150,20 @@ export interface HumanQA {
   dismissedAt?: string;
 }
 
+/** Telegram integration state as Settings sees it — never carries the token. */
+export interface TelegramStatus {
+  enabled: boolean;
+  hasToken: boolean;
+  running: boolean;
+  botUsername?: string;
+  paired: boolean;
+  ownerName?: string;
+  pairingCode?: string;
+  pairingLink?: string;
+  lang: 'ru' | 'en';
+  error?: string;
+}
+
 /** A card on the task kanban, persisted to hive/tasks.json. */
 export interface HiveTask {
   id: string;
@@ -1175,6 +1189,32 @@ const api = {
     proactivePosting?: boolean;
   }): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('slack:setConfig', patch),
+
+  // ─── Telegram integration (the owner's phone ↔ the orchestrator) ─────────────
+  // The token goes in through telegramSetToken and never comes back out: status
+  // reports only `hasToken`.
+  telegramStatus: (): Promise<TelegramStatus> =>
+    ipcRenderer.invoke('telegram:status'),
+  /** Save (or clear, with '') the bot token. A new token forgets the pairing. */
+  telegramSetToken: (token: string): Promise<TelegramStatus> =>
+    ipcRenderer.invoke('telegram:setToken', token),
+  telegramStart: (): Promise<TelegramStatus> =>
+    ipcRenderer.invoke('telegram:start'),
+  telegramStop: (): Promise<TelegramStatus> =>
+    ipcRenderer.invoke('telegram:stop'),
+  /** Issue a one-time pairing code (valid 15 minutes) and its t.me deep link. */
+  telegramNewPairingCode: (): Promise<TelegramStatus> =>
+    ipcRenderer.invoke('telegram:newPairingCode'),
+  telegramUnpair: (): Promise<TelegramStatus> =>
+    ipcRenderer.invoke('telegram:unpair'),
+  telegramSetLanguage: (lang: 'ru' | 'en'): Promise<TelegramStatus> =>
+    ipcRenderer.invoke('telegram:setLanguage', lang),
+  /** Live state pushes (connected, paired, errors); returns an unsubscribe fn. */
+  onTelegramState: (cb: (s: TelegramStatus) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, s: TelegramStatus): void => cb(s);
+    ipcRenderer.on('telegram:state', listener);
+    return () => ipcRenderer.removeListener('telegram:state', listener);
+  },
 
   // ─── Generic webhook + status API (POST → work, GET → status) ────────────────
   /** Start the generic webhook server; returns the public endpoint URL callers
