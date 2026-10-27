@@ -48,7 +48,9 @@ function copyMainSidecars() {
     // Office backup decisions, required by backups.ts.
     ['src/main/backups-core.cjs', 'out/main/backups-core.cjs'],
     // Agent watchdog decisions, required by index.ts.
-    ['src/main/watchdog-core.cjs', 'out/main/watchdog-core.cjs']
+    ['src/main/watchdog-core.cjs', 'out/main/watchdog-core.cjs'],
+    // Task chains and review, required by index.ts.
+    ['src/main/taskFlow-core.cjs', 'out/main/taskFlow-core.cjs']
   ];
   return {
     name: 'copy-main-cjs-sidecars',

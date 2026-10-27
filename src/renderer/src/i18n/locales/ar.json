@@ -1406,7 +1406,12 @@
       "today": "اليوم",
       "week": "7 أيام",
       "month": "30 يومًا"
-    }
+    },
+    "reviewLine": "المراجعة: {{who}} · {{state}}",
+    "review_waiting": "لم تُطلب بعد",
+    "review_requested": "بانتظار المراجع",
+    "review_changes": "أُعيدت للتعديل",
+    "review_approved": "تمت الموافقة"
   },
   "agentTasks": {
     "count": "{{open}} مفتوحة · {{done}} منجزة",

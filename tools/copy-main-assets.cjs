@@ -24,6 +24,8 @@ const MAIN_ASSETS = [
   ['src/main/backups-core.cjs', 'out/main/backups-core.cjs'],
   // Agent watchdog decisions (pure CJS) — required by index.ts.
   ['src/main/watchdog-core.cjs', 'out/main/watchdog-core.cjs'],
+  // Task chains and review (pure CJS) — required by index.ts.
+  ['src/main/taskFlow-core.cjs', 'out/main/taskFlow-core.cjs'],
   // Knowledge Graph core (pure-JS, no native deps) — required by knowledge.ts.
   ['src/main/kg-core.cjs', 'out/main/kg-core.cjs'],
 ];

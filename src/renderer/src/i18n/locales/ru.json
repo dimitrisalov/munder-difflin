@@ -1406,7 +1406,12 @@
       "today": "сегодня",
       "week": "7 дней",
       "month": "30 дней"
-    }
+    },
+    "reviewLine": "проверка: {{who}} · {{state}}",
+    "review_waiting": "ещё не просили",
+    "review_requested": "ждёт проверяющего",
+    "review_changes": "вернули на доработку",
+    "review_approved": "принято"
   },
   "agentTasks": {
     "count": "открыто {{open}} · готово {{done}}",

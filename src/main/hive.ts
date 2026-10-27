@@ -139,6 +139,12 @@ export interface HiveTask {
   /** Set when this task originated from the owner's Telegram — the message the
    *  done-summary replies to. Consumed OUTBOUND only, like `slack`. */
   telegram?: { chat_id: number; message_id: number };
+  /** Agent id that must approve this card's result before the owner hears it
+   *  is done (wave 6; see taskFlow-core.cjs). Unset = no review step. */
+  reviewer?: string;
+  /** The review round: the assignee asks ('requested'), the reviewer answers
+   *  ('approved' and closes the card, or 'changes' with notes). */
+  review?: { state?: 'requested' | 'changes' | 'approved'; by?: string; notes?: string; at?: string };
   /** Set when this task originated from a generic webhook POST. Stores the SHA-256
    *  of the capability token (never the raw token — that's returned to the caller
    *  once and never persisted), so a GET status lookup can match by hashing the
@@ -664,7 +670,9 @@ export class HiveManager {
     // can include tokens, paths and prompt fragments, and the hive repo is
     // committed on every change — a secret written there would be permanent.
     // log.jsonl gets the structured, non-sensitive fields; the dump stays local.
-    const want = ['fleet.json', 'hooks.sock', 'cost-ledger.jsonl', 'crashes/', '.DS_Store'];
+    // `task-flow.json` is the harness's own bookkeeping of chain/review notices
+    // (taskFlow-core.cjs) — churny, and nothing an agent should edit.
+    const want = ['fleet.json', 'hooks.sock', 'cost-ledger.jsonl', 'crashes/', 'task-flow.json', '.DS_Store'];
     let lines: string[] = [];
     if (existsSync(gitignore)) { try { lines = readFileSync(gitignore, 'utf8').split('\n'); } catch { lines = []; } }
     const missing = want.filter((w) => !lines.includes(w));
@@ -3029,6 +3037,21 @@ There are two shared surfaces, both in the hive root:
   (\`OF-12\`), which is how the human names cards from the phone. \`byId\` maps card id → number.
   When a message carries a \`[tickets] OF-12 = task "…"\` line, the harness already resolved the
   keys the human typed to card ids for you.
+
+## Chains and review (the harness moves cards along)
+- **Chains.** When work must wait for other work, put the earlier cards' ids in the waiting card's
+  \`dependsOn\`, give it its \`assignee\`, and leave it \`todo\`. Do not start a card whose dependencies
+  are not done. When the last of them is done, the harness messages the waiting card's assignee with
+  the results of the cards it waited on — so whenever you finish a card, write a useful \`result\`
+  (what you found or made, and the paths to the files).
+- **Review.** A card can name a \`reviewer\` (an agent id). If you are the assignee of such a card, do
+  NOT set it \`done\`: write \`result\` and set \`"review": {"state": "requested"}\`, leaving the status
+  \`doing\`. The harness asks the reviewer. The reviewer approves with
+  \`"review": {"state": "approved", "by": "<their id>"}\` plus \`"status": "done"\` — only then does the
+  owner hear about it — or sends it back with \`"review": {"state": "changes", "by": "<their id>",
+  "notes": "what to fix"}\`, and the harness passes the notes to you. A card with a reviewer that is
+  closed without approval is reopened as a review request.
+- The god decides who reviews what: worth it for anything the owner will read or publish.
 
 ## Asking the human (the ASK ME card)
 When a card can only move with the human — a question to answer, or an action only they can do

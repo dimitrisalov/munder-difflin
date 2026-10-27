@@ -116,8 +116,9 @@ function buildState({ registry, tasks, limits, now }) {
     .sort((a, b) => order[a.status] - order[b.status] || (a.priority || 0) - (b.priority || 0))
     .slice(0, 40)
     .map((t) => ({ id: t.id, title: t.title || t.id, status: t.status, assignee: t.assignee || null }));
+  // A card with a reviewer is not a result until approved (taskFlow-core.cjs, wave 6).
   const done = list
-    .filter((t) => t && t.status === 'done')
+    .filter((t) => t && t.status === 'done' && !(t.reviewer && !(t.review && t.review.state === 'approved')))
     .slice(-10)
     .reverse()
     .map((t) => ({ id: t.id, title: t.title || t.id, result: String(t.result || '').slice(0, 1500) }));

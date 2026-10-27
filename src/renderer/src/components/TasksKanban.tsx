@@ -37,6 +37,23 @@ export interface HiveTask {
   humanQA?: HumanQA[];
   /** Short ticket key (OF-12) from hive/tickets.json; display only. */
   ticket?: string;
+  /** Agent that must approve the result before the owner hears of it, and the
+   *  round's state (wave 6; main/taskFlow-core.cjs moves the card along). */
+  reviewer?: string;
+  review?: { state?: ReviewState; by?: string; notes?: string };
+}
+
+export type ReviewState = 'requested' | 'changes' | 'approved';
+const REVIEW_STATES: readonly ReviewState[] = ['requested', 'changes', 'approved'];
+
+/** Where a card's review stands, for display: null when it has no reviewer. A
+ *  card closed without approval is still waiting, as main sees it. */
+export function reviewStage(t: HiveTask): ReviewState | 'waiting' | null {
+  if (!t.reviewer) return null;
+  const s = t.review?.state;
+  if (s === 'approved') return 'approved';
+  if (t.status === 'done') return 'requested';
+  return s ?? 'waiting';
 }
 
 /** The card's currently open question for the human, if any. An entry the human
@@ -110,6 +127,17 @@ export function parseTasks(raw: unknown): HiveTask[] {
             // resurface on the next poll (openQuestion would see it as open).
             dismissedAt: typeof e.dismissedAt === 'string' ? e.dismissedAt : undefined
           }))
+        : undefined,
+      reviewer: typeof t.reviewer === 'string' && t.reviewer ? t.reviewer : undefined,
+      review: t.review && typeof t.review === 'object'
+        ? (() => {
+          const r = t.review as Record<string, unknown>;
+          return {
+            state: REVIEW_STATES.includes(r.state as ReviewState) ? (r.state as ReviewState) : undefined,
+            by: typeof r.by === 'string' ? r.by : undefined,
+            notes: typeof r.notes === 'string' ? r.notes : undefined
+          };
+        })()
         : undefined
     }));
 }
@@ -255,6 +283,7 @@ export function TasksKanban() {
                     task={t}
                     accent={col.accent}
                     assigneeName={nameFor(t.assignee)}
+                    reviewerName={nameFor(t.reviewer)}
                     onOpen={() => openTaskDetail(t.id)}
                     onDismiss={() => dismissTask(t.id)}
                   />
@@ -274,10 +303,11 @@ export function TasksKanban() {
 // lives in the detail view a click away: a kanban card can carry little more
 // than a title.
 
-function TaskCard({ task, accent, assigneeName, onOpen, onDismiss }: {
+function TaskCard({ task, accent, assigneeName, reviewerName, onOpen, onDismiss }: {
   task: HiveTask;
   accent: string;
   assigneeName?: string;
+  reviewerName?: string;
   onOpen: () => void;
   onDismiss: () => void;
 }) {
@@ -312,6 +342,11 @@ function TaskCard({ task, accent, assigneeName, onOpen, onDismiss }: {
           {assigneeName && (
             <span style={{ fontSize: 10, color: 'var(--cth-ink-500)', fontFamily: 'var(--cth-font-display)' }}>
               {assigneeName.toUpperCase()}
+            </span>
+          )}
+          {reviewStage(task) && (
+            <span style={{ fontSize: 10, color: reviewStage(task) === 'changes' ? 'var(--cth-coral-700, #b3412c)' : 'var(--cth-ink-500)' }}>
+              {t('kanban.reviewLine', { who: reviewerName ?? task.reviewer, state: t(`kanban.review_${reviewStage(task)}`) })}
             </span>
           )}
         </span>
@@ -351,10 +386,11 @@ function TaskCard({ task, accent, assigneeName, onOpen, onDismiss }: {
 // the big stage instead of the narrow side panel. Exported for App's
 // TaskDetailOverlay; opened via the store's openTaskDetail from anywhere.
 
-export function TaskDetail({ task, all, assigneeName, onMove, onAssign, onClose }: {
+export function TaskDetail({ task, all, assigneeName, reviewerName, onMove, onAssign, onClose }: {
   task: HiveTask;
   all: HiveTask[];
   assigneeName?: string;
+  reviewerName?: string;
   onMove: (s: Status) => void;
   onAssign: () => void;
   onClose: () => void;
@@ -405,6 +441,17 @@ export function TaskDetail({ task, all, assigneeName, onMove, onAssign, onClose 
                 {isNaN(created.getTime()) ? '' : created.toLocaleString()}
               </span>
             </div>
+
+            {/* Review (wave 6): who checks it, where the round stands, and the
+                reviewer's notes when it was sent back. */}
+            {reviewStage(task) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--cth-ink-700)' }}>
+                <span>{t('kanban.reviewLine', { who: reviewerName ?? task.reviewer, state: t(`kanban.review_${reviewStage(task)}`) })}</span>
+                {reviewStage(task) === 'changes' && task.review?.notes && (
+                  <span style={{ whiteSpace: 'pre-wrap', color: 'var(--cth-coral-700, #b3412c)' }} dir={rtl ? 'auto' : undefined}>{task.review.notes}</span>
+                )}
+              </div>
+            )}
 
             {/* The contract — preserved line by line */}
             <div style={{

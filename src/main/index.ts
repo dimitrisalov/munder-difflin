@@ -1759,7 +1759,7 @@ async function pollSlackDoneTasks(): Promise<void> {
   // First tick seeds the baseline (ids already done) and posts nothing — so we
   // only ever fire on a transition observed live this session.
   if (slackDoneBaseline === null) {
-    slackDoneBaseline = new Set(tasks.filter((t) => t.status === 'done').map((t) => t.id));
+    slackDoneBaseline = new Set(tasks.filter((t) => t.status === 'done' && !taskFlowCore.isAwaitingReview(t)).map((t) => t.id));
     return;
   }
   const baseline = slackDoneBaseline;
@@ -1768,6 +1768,7 @@ async function pollSlackDoneTasks(): Promise<void> {
   try {
     for (const t of tasks) {
       if (t.status !== 'done') continue;
+      if (taskFlowCore.isAwaitingReview(t)) continue; // not done until its reviewer approves (wave 6)
       if (baseline.has(t.id) || notified.has(t.id)) continue; // already handled
       const slack = t.slack;
       if (!slack || !slack.channel || !slack.thread_ts) continue; // non-Slack-origin → leave alone
@@ -2437,12 +2438,13 @@ async function pollTelegramOutbound(): Promise<void> {
     // First pass seeds the baseline and announces nothing, so only transitions
     // seen live this session are reported (same contract as the Slack notifier).
     if (telegramDoneBaseline === null) {
-      telegramDoneBaseline = new Set(tasks.filter((t) => t.status === 'done').map((t) => t.id));
+      telegramDoneBaseline = new Set(tasks.filter((t) => t.status === 'done' && !taskFlowCore.isAwaitingReview(t)).map((t) => t.id));
       return;
     }
     const doneNotified = new Set(runtime.doneNotified ?? []);
     for (const t of tasks) {
       if (t.status !== 'done' || !t.telegram || telegramDoneBaseline.has(t.id) || doneNotified.has(t.id)) continue;
+      if (taskFlowCore.isAwaitingReview(t)) continue; // not done until its reviewer approves (wave 6)
       const answeredDirectly = telegramDirectlyReplied.has(t.telegram.message_id);
       const hasBody = !!(t.result ?? t.description ?? '').trim();
       if (!answeredDirectly && hasBody) {
@@ -2914,7 +2916,7 @@ function pollWebhookDoneTasks(): void {
     tasks = Array.isArray(ledger?.tasks) ? ledger.tasks : [];
   } catch { return; } // unreadable/missing tasks.json → skip this tick
   const done = tasks.filter((t) =>
-    t.status === 'done' && (t.webhook != null || t.id.startsWith('webhook-')));
+    t.status === 'done' && !taskFlowCore.isAwaitingReview(t) && (t.webhook != null || t.id.startsWith('webhook-')));
   if (done.length === 0) return;
   const recorded = webhookOutboundRecorded ?? (webhookOutboundRecorded = seedWebhookOutbound());
   const fresh = done.filter((t) => !recorded.has(t.id));
@@ -6512,8 +6514,69 @@ function bootstrapHiveServices(): void {
   memory.start(); // init shared palace + mine loop (no-op without mempalace)
   reflector.start(); // bound oversized memory.md files on a timer (no-op until threshold)
   startBackups(); // a copy of the hive + roster now if due, then daily (wave 5)
+  startTaskFlow(); // chains wake their next card; reviewed cards wait for approval (wave 6)
 
   armAlwaysOnBeats();
+}
+
+// ─── Task flow: chains and review (wave 6) ──────────────────────────────────
+// Every few seconds the cards are read and taskFlow-core.cjs says what to do:
+// tell a waiting card's assignee its dependencies are done (with their
+// results), ask a reviewer to check a finished card, hand review notes back,
+// and reopen a card closed without its reviewer's approval. The bookkeeping
+// lives in hive/task-flow.json (gitignored) so a restart repeats nothing.
+interface TaskFlowAction {
+  kind: 'unblock' | 'review-requested' | 'changes-requested' | 'reopen-for-review';
+  taskId: string;
+  to?: string | null;
+}
+interface TaskFlowCore {
+  isAwaitingReview: (task: unknown) => boolean;
+  planFlow: (tasks: unknown[], ledger: unknown, nowIso: string) => { actions: TaskFlowAction[]; ledger: unknown };
+  messageFor: (action: TaskFlowAction, key?: (id: string) => string) => { subject: string; body: string } | null;
+}
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const taskFlowCore = require('./taskFlow-core.cjs') as TaskFlowCore;
+const TASK_FLOW_POLL_MS = 5000;
+let taskFlowTimer: ReturnType<typeof setInterval> | null = null;
+
+function taskFlowTick(): void {
+  const root = hive.root();
+  if (!root) return;
+  const ledgerPath = join(root, 'task-flow.json');
+  let ledger: unknown = null;
+  try { ledger = existsSync(ledgerPath) ? JSON.parse(readFileSync(ledgerPath, 'utf8')) : null; } catch { ledger = null; }
+  const tasks = hiveTaskList();
+  const plan = taskFlowCore.planFlow(tasks, ledger, new Date().toISOString());
+  const before = JSON.stringify(ledger);
+  if (plan.actions.length === 0 && before === JSON.stringify(plan.ledger)) return;
+  // Save first: a crash mid-way then skips a notice rather than repeating it.
+  try {
+    writeFileSync(`${ledgerPath}.tmp`, JSON.stringify(plan.ledger), 'utf8');
+    renameSync(`${ledgerPath}.tmp`, ledgerPath);
+  } catch (e) { console.error('[taskflow] could not save its ledger:', e); return; }
+  const keys = ticketBook.keys(tasks);
+  const godId = hive.registry().godId ?? 'god';
+  for (const a of plan.actions) {
+    try {
+      if (a.kind === 'reopen-for-review') {
+        const card = tasks.find((t) => t.id === a.taskId);
+        hive.patchTask(a.taskId, { status: 'doing', review: { ...(card?.review ?? {}), state: 'requested' } } as Partial<HiveTask>);
+        console.log(`[taskflow] ${a.taskId} was closed before its review; reopened as a review request`);
+        continue;
+      }
+      const msg = taskFlowCore.messageFor(a, (id) => keys[id] ?? '');
+      if (!msg) continue;
+      hive.send({ to: a.to || godId, act: 'request', subject: msg.subject, body: msg.body }, 'harness');
+      console.log(`[taskflow] ${a.kind} ${a.taskId} → ${a.to || godId}`);
+    } catch (e) { console.error(`[taskflow] ${a.kind} ${a.taskId} failed:`, e); }
+  }
+}
+
+function startTaskFlow(): void {
+  if (taskFlowTimer) clearInterval(taskFlowTimer);
+  taskFlowTimer = setInterval(taskFlowTick, TASK_FLOW_POLL_MS);
+  taskFlowTimer.unref?.();
 }
 
 // ─── Office backups (wave 5) ────────────────────────────────────────────────

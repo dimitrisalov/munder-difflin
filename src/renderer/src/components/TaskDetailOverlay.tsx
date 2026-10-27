@@ -72,6 +72,7 @@ export function TaskDetailOverlay() {
       task={task}
       all={tasks}
       assigneeName={nameFor(task.assignee)}
+      reviewerName={nameFor(task.reviewer)}
       onMove={(s) => void move(s)}
       onAssign={assign}
       onClose={closeTaskDetail}

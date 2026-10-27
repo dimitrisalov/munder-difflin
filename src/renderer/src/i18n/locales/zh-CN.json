@@ -1406,7 +1406,12 @@
       "today": "今天",
       "week": "7 天",
       "month": "30 天"
-    }
+    },
+    "reviewLine": "审核：{{who}} · {{state}}",
+    "review_waiting": "尚未请求",
+    "review_requested": "等待审核人",
+    "review_changes": "已退回修改",
+    "review_approved": "已通过"
   },
   "agentTasks": {
     "count": "进行中 {{open}} · 已完成 {{done}}",

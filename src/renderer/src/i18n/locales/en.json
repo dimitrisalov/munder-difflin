@@ -1406,7 +1406,12 @@
       "today": "today",
       "week": "7 days",
       "month": "30 days"
-    }
+    },
+    "reviewLine": "review: {{who}} · {{state}}",
+    "review_waiting": "not asked yet",
+    "review_requested": "waiting for the reviewer",
+    "review_changes": "sent back",
+    "review_approved": "approved"
   },
   "agentTasks": {
     "count": "{{open}} open · {{done}} done",

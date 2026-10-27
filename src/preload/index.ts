@@ -223,6 +223,9 @@ export interface HiveTask {
   /** SHA-256 of the capability token for a generic-webhook-sourced task (drives
    *  the GET status lookup; the raw token is never persisted). */
   webhook?: { tokenHash: string };
+  /** Reviewer and review round (wave 6; mirrors main/hive.ts). */
+  reviewer?: string;
+  review?: { state?: 'requested' | 'changes' | 'approved'; by?: string; notes?: string; at?: string };
 }
 
 /** A message the router just delivered, with its resolved recipient ids. Drives
