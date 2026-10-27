@@ -14,6 +14,7 @@ import { MAX_AGENT_TOKEN_CAP } from '../shared/tokenCaps';
 import { expandTilde, normalizeHiveHome } from './fs';
 import type { IntegrationRecord } from '../shared/integrations';
 import type { PeriodLimitsConfig } from './periodLimits';
+import { DEFAULT_WORK_SWITCH, type WorkSwitchConfig } from '../shared/workSwitch';
 import {
   DEFAULT_CONTEXT_TRIGGER,
   DEFAULT_ORG_TRIGGER,
@@ -62,7 +63,9 @@ export interface ScheduledMission {
 
 /** The built-in hourly ops standup: god reviews who's doing what + whether tasks
  *  are on track and agents are running, and every terminal's context is compacted.
- *  Shipped enabled by default; users can toggle it off in the Command Center. */
+ *  Shipped DISABLED for new installs: an hourly orchestrator turn spends the
+ *  subscription whether or not anything happened. Users can switch it on in the
+ *  Command Center; existing installs keep whatever they had. */
 export const OPS_STANDUP_MISSION: ScheduledMission = {
   id: 'ops-standup',
   label: 'Hourly ops standup',
@@ -77,7 +80,7 @@ export const OPS_STANDUP_MISSION: ScheduledMission = {
     'next step, then compact and resume from the same point — so terminal ' +
     'contexts stay bounded without losing work. The compaction is queued and ' +
     'runs when an agent is idle, so it never interrupts work mid-step.)',
-  enabled: true
+  enabled: false
   // NO autoCompact. Compaction belongs to contextTrigger.compact and nothing else.
   // This flag used to live here as well, which meant a default install asked for
   // compaction on TWO cadences — hourly from this standup and 2-hourly from the
@@ -255,6 +258,10 @@ export interface HarnessConfig {
    *  own limit trips that agent. Opt-in: unset means no period limits. See
    *  periodUsage.cjs. Written through the `limits:set` IPC (main-side merge). */
   periodLimits?: PeriodLimitsConfig;
+  /** Fresh context on a switch of work: an agent that has worked for a while
+   *  writes handoff.md, clears, and starts new work from the note. On by
+   *  default (see shared/workSwitch.ts); the renderer's inbox loop applies it. */
+  workSwitchClear?: WorkSwitchConfig;
   /** Agent ids whose automatic inbox/queue delivery is paused. Pending messages
    *  stay durable until the operator explicitly resumes delivery. */
   autoDeliveryPausedAgents?: string[];
@@ -475,6 +482,7 @@ const DEFAULTS: HarnessConfig = {
   // straight back out of `readConfig` for a config that never persisted them, so
   // `withTriggerDefaults` re-copies them on every read — see the note there.
   contextTrigger: DEFAULT_CONTEXT_TRIGGER,
+  workSwitchClear: DEFAULT_WORK_SWITCH,
   webhookTriggers: [],
   orgTrigger: DEFAULT_ORG_TRIGGER,
   triggersMigratedV1: false,

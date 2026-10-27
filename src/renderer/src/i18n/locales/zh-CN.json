@@ -297,6 +297,9 @@
       "limitsSaved": "已保存",
       "limitsInvalid": "有些值不是令牌数量。请使用 3000000、3m 或 500k。",
       "limitsHint": "令牌数量可写成 3000000、3m 或 500k。留空表示没有上限。",
+      "workSwitchTitle": "新任务时使用全新上下文",
+      "workSwitchDesc": "当已经工作了一段时间的智能体收到新任务时，它会先写好 handoff.md，然后清空上下文，再根据这份记录开始新任务。可在长会话中节省令牌；不会用于编排者。",
+      "workSwitchAfter": "会话时长达到（分钟）",
       "killOnTrip": "触发即终止",
       "steerFirst": "先引导",
       "saved": "已保存"

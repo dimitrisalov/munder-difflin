@@ -18,7 +18,8 @@ import { DEFAULT_CONTEXT_TRIGGER, type ContextRule } from '../../../shared/trigg
 import type { AgentProvider } from '../../../shared/agentProvider';
 import { bridgeOf, providerPreset } from '../../../shared/agentProvider';
 import { isDurableRole, preferredAgentRole, roleForHiveSpawn } from '../../../shared/agentRole';
-import { inboxNudgeText } from '../../../shared/hiveNudge';
+import { inboxNudgeText, isInboxNudge } from '../../../shared/hiveNudge';
+import { findWorkRequest, shouldHandoff, HANDOFF_PROMPT, RESUME_PREFIX } from '../../../shared/workSwitch';
 import { resolveGodName } from '../../../shared/godIdentity';
 import { acquireTerminal, resetTerminal, isTerminalAutomationSafe } from '@/components/terminalPool';
 import { canDeliverToAgent, deliverWithAcknowledgement, checkPrecondition } from './queueDelivery';
@@ -298,6 +299,14 @@ export function useHive(config: HarnessConfig | null): void {
   // negligible next to a stalled agent. Evicting ids that have left the inbox would
   // bound it exactly; deliberately not done here to keep this fix minimal.
   const nudged = useRef<Record<string, Set<string>>>({});
+  // Fresh context on a switch of work (shared/workSwitch.ts). When this agent's
+  // current session began (first seen with a terminal, or our last handoff
+  // clear), and the conversation of the last work request it was woken for.
+  // The config rides in a ref because the inbox loop below is armed once.
+  const sessionStartedAt = useRef<Record<string, number>>({});
+  const workConversation = useRef<Record<string, string>>({});
+  const workSwitchCfg = useRef(config?.workSwitchClear);
+  workSwitchCfg.current = config?.workSwitchClear;
   // Per-agent context size at the last auto-/compact queued. See the latch note
   // in the context-trigger effect: an idle agent's token count is frozen, so
   // without this the pressure gate re-fires on the identical number every cycle.
@@ -708,6 +717,35 @@ export function useHive(config: HarnessConfig | null): void {
           // on the floor when the agent is god.
           const seen = nudged.current[a.id] ?? (nudged.current[a.id] = new Set());
           const fresh = inbox.filter((m) => m.id && !seen.has(m.id));
+          const now = Date.now();
+          sessionStartedAt.current[a.id] ??= now;
+          // New work for an agent that has been at it a long time: hand off,
+          // clear, and start the new task from the handoff note instead of
+          // re-reading the whole old history on every request. All three steps
+          // ride the same idle-gated queue as the nudge, in order.
+          const request = fresh.length ? findWorkRequest(fresh, workConversation.current[a.id]) : undefined;
+          if (request?.conversation) workConversation.current[a.id] = request.conversation;
+          const queued = useStore.getState().messageQueues[a.id] ?? [];
+          const clearCommand = clearCommandForProvider(inferAgentProvider(a.command, a.provider));
+          if (fresh.length && clearCommand && shouldHandoff({
+            cfg: workSwitchCfg.current,
+            isGod: !!a.isGod,
+            isAssistant: !!a.isAssistant,
+            sessionStartedAt: sessionStartedAt.current[a.id],
+            now,
+            contextTokens: a.contextTokens,
+            canClear: true,
+            nudgePending: queued.some((m) => isInboxNudge(m.text)),
+            request
+          })) {
+            const { enqueueMessage } = useStore.getState();
+            enqueueMessage(a.id, HANDOFF_PROMPT);
+            enqueueMessage(a.id, clearCommand);
+            enqueueMessage(a.id, RESUME_PREFIX + inboxNudgeText(fresh.map((m) => m.id)), { precondition: 'inbox-nonempty' });
+            sessionStartedAt.current[a.id] = now;
+            for (const m of fresh) seen.add(m.id);
+            continue;
+          }
           if (fresh.length) {
             // Name the ids: the nudge is queued now and typed whenever the agent
             // next goes idle, so it can arrive long after the agent drained and

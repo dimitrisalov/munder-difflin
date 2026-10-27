@@ -297,6 +297,9 @@
       "limitsSaved": "saved",
       "limitsInvalid": "Some values are not token counts. Use 3000000, 3m or 500k.",
       "limitsHint": "Enter tokens as 3000000, 3m or 500k. An empty cell means no limit.",
+      "workSwitchTitle": "Fresh context on new work",
+      "workSwitchDesc": "When an agent that has worked for a while gets a new task, it first writes handoff.md, its context is cleared, and it starts the new task from that note. Saves tokens on long sessions; never applied to the orchestrator.",
+      "workSwitchAfter": "After, minutes",
       "killOnTrip": "kill on trip",
       "steerFirst": "steer first",
       "saved": "saved"

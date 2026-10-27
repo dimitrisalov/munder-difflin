@@ -23,6 +23,7 @@ import { IntegrationsRegistry } from './IntegrationsRegistry';
 import { AiEnginesSettings } from './AiEnginesSettings';
 import { TelegramSettings } from './TelegramSettings';
 import { PeriodLimitsSettings } from './PeriodLimitsSettings';
+import { WorkSwitchSettings } from './WorkSwitchSettings';
 import { REALTIME_MODEL } from '@shared/realtimePricing';
 import { RealtimeDevicePicker } from '@/realtime/DevicePicker';
 import { CostHud } from '@/realtime/CostHud';
@@ -1367,6 +1368,11 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
 
                       {/* Token limits per rolling period — office + per agent (periodUsage.cjs). */}
                       <PeriodLimitsSettings />
+
+                      <div style={{ height: 1, background: 'var(--cth-ink-300)' }} />
+
+                      {/* Fresh context on a switch of work (shared/workSwitch.ts). */}
+                      <WorkSwitchSettings />
                     </>
                   )}
 

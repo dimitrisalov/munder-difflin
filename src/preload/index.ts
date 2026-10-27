@@ -352,6 +352,8 @@ export interface HarnessConfig {
   costCapTokens?: number;
   agentTokenCaps?: Record<string, number>;
   periodLimits?: PeriodLimitsConfig;
+  /** Fresh context on a switch of work (shared/workSwitch.ts). */
+  workSwitchClear?: { enabled: boolean; minSessionMinutes: number; minContextTokens: number };
   autoDeliveryPausedAgents?: string[];
   maxTurns?: number;
   circuitBreaker?: CircuitBreakerConfig;
