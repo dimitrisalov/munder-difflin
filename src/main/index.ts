@@ -3058,6 +3058,11 @@ if (process.defaultApp) {
   app.setAsDefaultProtocolClient('munderdifflin');
 }
 
+// Server mode (MD_SERVER=1): the office runs on an always-on Linux box under a
+// virtual display (deploy/server). There is no GPU there, so draw in software
+// from the start instead of letting the GPU process fail and retry.
+if (process.env.MD_SERVER === '1') app.disableHardwareAcceleration();
+
 // Deep links on Windows/Linux arrive as the argv of a SECOND process — take the
 // single-instance lock and forward them to the running instance. (macOS gets
 // the 'open-url' event instead.) The lock also rules out two harnesses fighting
