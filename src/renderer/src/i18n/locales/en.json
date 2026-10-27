@@ -394,7 +394,18 @@
       "orgKeyDesc": "How a teammate's install addresses yours.",
       "apiKey": "API key",
       "orgKeyPlaceholder": "paste your organisation key",
-      "orgConfigOnly": "Configuration only for now. The organisation messaging service does not exist yet, so a key here starts no transport — it is saved, shown in the Triggers tab, and waits."
+      "orgConfigOnly": "Configuration only for now. The organisation messaging service does not exist yet, so a key here starts no transport — it is saved, shown in the Triggers tab, and waits.",
+      "statusTitle": "Status",
+      "eventsTitle": "Recent events",
+      "eventsEmpty": "Nothing yet.",
+      "eventsMore": "show {{count}} more",
+      "statusNames": {
+        "telegram": "Telegram",
+        "panel": "Mobile panel",
+        "slack": "Slack",
+        "webhook": "Webhooks",
+        "capabilities": "Capabilities"
+      }
     },
     "voice": {
       "freeFlow": "Free Flow",

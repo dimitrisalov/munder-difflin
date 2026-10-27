@@ -128,13 +128,13 @@ export async function loadBoard(): Promise<HiveTask[]> {
 export function DateRangeChips({ value, onChange }: { value: DateRange; onChange: (r: DateRange) => void }) {
   const { t } = useTranslation();
   return (
-    <span style={{ display: 'inline-flex', gap: 4 }}>
+    <span style={{ display: 'inline-flex', gap: 4, flexShrink: 0 }}>
       {DATE_RANGES.map((r) => (
         <button
           key={r}
           onClick={() => onChange(r)}
           style={{
-            padding: '1px 6px 0', border: 'none', cursor: 'pointer',
+            padding: '1px 6px 0', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
             background: value === r ? 'var(--cth-lemon-light)' : 'transparent',
             boxShadow: 'inset 0 0 0 1px var(--cth-ink-100)',
             fontFamily: 'var(--cth-font-ui)', fontSize: 11, color: 'var(--cth-ink-900)'

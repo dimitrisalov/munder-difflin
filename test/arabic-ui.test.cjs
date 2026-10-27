@@ -205,6 +205,8 @@ test('no Arabic string is left as its English source', () => {
   const SAME_ON_PURPOSE = new Set([
     'settings.connections.slack',            // product name
     'settings.connections.telegram',         // product name
+    'settings.connections.statusNames.slack',    // product name
+    'settings.connections.statusNames.telegram', // product name
     'onboarding.providerBlurb.claude',       // "Claude Code — Anthropic": two product names
     'onboarding.providerBlurb.codex',
     'onboarding.providerBlurb.antigravity',

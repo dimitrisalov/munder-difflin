@@ -46,6 +46,7 @@ import { PanelServer, panelCore } from './panel';
 import { tempsCore, TempLedgerStore, type TempsConfig } from './temps';
 import { TicketBook } from './tickets';
 import { CapabilityCatalog, capCore, localClaudeInventory } from './capabilities';
+import { IntegrationEventLog } from './integrationEvents';
 import { mcpCatalogEntry } from '../shared/mcpCatalog';
 import { networkInterfaces } from 'node:os';
 import {
@@ -1217,6 +1218,8 @@ function breakerToast(title: string, body: string): void {
 /** Token limits per period: the incremental ledger fold behind the breaker's
  *  `limitTrip` input, `/limits` in Telegram and the Settings usage bars. */
 const periodTracker = new PeriodLimitTracker();
+/** Recent events on the outside connections, for Settings → Connections → Status. */
+const integrationEvents = new IntegrationEventLog(() => join(app.getPath('userData'), 'integration-events.json'));
 /** Which temp belonged to which parent (wave 3), so a temp's tokens count
  *  toward its parent's period limits even after the temp is gone. */
 const tempLedger = new TempLedgerStore(() => join(app.getPath('userData'), 'temps.json'));
@@ -1771,6 +1774,7 @@ async function startSlackServer(): Promise<{ ok: boolean; url?: string; error?: 
     // liveWebContents() so a message arriving during window teardown can't throw.
     // Downloads any file attachments (bot token stays in main; local paths go to IPC).
     onMessage: async (m) => {
+      integrationEvents.push('slack', 'message from Slack');
       const localFiles = await downloadSlackFiles(
         m._rawFiles ?? [],
         readConfig().slackBotToken
@@ -2053,7 +2057,10 @@ async function telegramSendToOwner(html: string, replyTo?: number, replyMarkup?:
   const s = telegramSettings();
   if (!s.botToken || s.ownerChatId === undefined) return [];
   const r = await sendTelegramText({ token: s.botToken, chatId: s.ownerChatId, text: html, html: true, replyTo, replyMarkup });
-  if (!r.ok) console.error('[telegram] send failed:', r.error);
+  if (!r.ok) {
+    console.error('[telegram] send failed:', r.error);
+    integrationEvents.push('telegram', `send failed: ${r.error ?? 'unknown error'}`, 'error');
+  }
   return r.messageIds;
 }
 
@@ -2159,6 +2166,12 @@ async function transcribeTelegramVoice(
 async function handleTelegramDecision(d: Exclude<TelegramDecision, { kind: 'ignore' }>): Promise<void> {
   const lang = telegramSettings().lang ?? 'ru';
   const S = tgCore.strings(lang);
+  integrationEvents.push('telegram', d.kind === 'pair' ? 'paired with the owner'
+    : d.kind === 'command' ? `command /${d.cmd}`
+    : d.kind === 'callback' ? 'button pressed under a question'
+    : d.voice ? 'voice note from the owner'
+    : d.files.length > 0 ? `message with ${d.files.length} file(s) from the owner`
+    : 'message from the owner');
 
   if (d.kind === 'pair') {
     writeTelegramSettings({
@@ -2355,6 +2368,7 @@ async function pollTelegramOutbound(): Promise<void> {
       if (asksNotified.has(key)) continue;
       const ids = await sendTelegramAsk(ask, lang);
       if (ids.length === 0) continue; // transient failure → retry next tick
+      integrationEvents.push('telegram', `question sent: ${ask.title}`);
       asksNotified.add(key);
       writeTelegramRuntime({ asksNotified: cappedIds(asksNotified) });
     }
@@ -2373,6 +2387,7 @@ async function pollTelegramOutbound(): Promise<void> {
       if (!answeredDirectly && hasBody) {
         const ids = await telegramSendToOwner(tgCore.formatDone(t, lang), t.telegram.message_id);
         if (ids.length === 0) continue; // transient failure → retry next tick
+        integrationEvents.push('telegram', `result sent: ${t.title}`);
         rememberTelegramMessages(ids, { kind: 'task', taskId: t.id });
       }
       doneNotified.add(t.id);
@@ -2417,7 +2432,11 @@ async function startTelegram(): Promise<TelegramStatus> {
     onDecision: handleTelegramDecision,
     initialOffset: telegramRuntime().offset,
     onOffset: (offset) => writeTelegramRuntime({ offset }),
-    onState: (st) => { telegramLastError = st.error; notifyTelegramState(); }
+    onState: (st) => {
+      if (st.error && st.error !== telegramLastError) integrationEvents.push('telegram', st.error, 'error');
+      telegramLastError = st.error;
+      notifyTelegramState();
+    }
   });
   const r = await telegramBot.start();
   if (!r.ok) {
@@ -2534,9 +2553,14 @@ async function startPanel(): Promise<ReturnType<typeof panelStatus>> {
       limits: { config: readConfig().periodLimits ?? {}, usage: periodTracker.snapshot() },
       now: Date.now()
     }),
-    onTask: dispatchPanelTask,
+    onTask: async (text) => {
+      const r = await dispatchPanelTask(text);
+      integrationEvents.push('panel', r.ok ? `new task: ${ticketBook.keys(hiveTaskList())[r.taskId ?? ''] ?? r.taskId}` : `task not accepted: ${r.error}`, r.ok ? 'info' : 'error');
+      return r;
+    },
     onAnswer: async (taskId, q, answer) => {
       const r = answerAskOnCard(taskId, q, answer, 'the mobile panel');
+      integrationEvents.push('panel', r.ok ? `answer: ${r.title ?? taskId}` : 'answer to a question that is no longer open', r.ok ? 'info' : 'error');
       return r.ok ? { ok: true } : { ok: false, error: 'this question is no longer open' };
     }
   });
@@ -2714,6 +2738,7 @@ function dispatchWebhookWork(arg: {
  * the ledger.
  */
 function handleWebhookMessage(msg: WebhookInbound, endpoint: WebhookEndpointRef): WebhookDispatch | null {
+  integrationEvents.push('webhook', 'request received');
   // 192-bit unguessable token, returned once; only its hash is stored.
   const token = randomBytes(24).toString('hex');
   const tokenHash = hashWebhookToken(token);
@@ -4492,7 +4517,36 @@ ipcMain.handle('capabilities:runStep', async (evt, id: unknown, index: unknown) 
   if (!ptyManager.isCommandAvailable(bin)) return { ok: false, error: `${bin} is not installed on this machine` };
   const ptyId = `cap-install-${++capInstallSeq}`;
   const res = ptyManager.spawn({ id: ptyId, cwd: homedir(), command: bin, args, cols: 100, rows: 18 }, evt.sender);
+  integrationEvents.push('capabilities', `${entry.name}: ${step.argv.join(' ')}`, res.ok ? 'info' : 'error');
   return res.ok ? { ok: true, ptyId, argv: step.argv } : { ok: false, error: res.error ?? 'could not start the terminal' };
+});
+
+/** Settings → Connections → Status: every outside connection at a glance, and
+ *  the last 50 events on them. No secrets: states, addresses and counts only. */
+ipcMain.handle('integrations:status', () => {
+  const tg = telegramStatus();
+  const panel = panelStatus();
+  const cfg = readConfig();
+  const items: { id: string; label?: string; state: 'on' | 'off' | 'error'; detail: string }[] = [
+    {
+      id: 'telegram',
+      state: tg.error ? 'error' : tg.running ? 'on' : 'off',
+      detail: tg.error ?? (tg.running ? `@${tg.botUsername ?? '?'}${tg.paired ? ` · ${tg.ownerName ?? 'paired'}` : ' · not paired'}` : tg.hasToken ? 'stopped' : 'no bot token')
+    },
+    { id: 'panel', state: panel.error ? 'error' : panel.running ? 'on' : 'off', detail: panel.error ?? (panel.running ? `${panel.host}:${panel.port}` : 'stopped') },
+    { id: 'slack', state: slackServer ? 'on' : 'off', detail: slackServer ? (lastSlackUrl ?? 'running') : cfg.slackEnabled ? 'enabled, not running' : 'off' },
+    { id: 'webhook', state: webhookServer ? 'on' : 'off', detail: webhookServer ? `${webhookEndpointUrls().length} endpoint(s)` : 'off' },
+    ...integrations.listRecordsRedacted().map((r) => {
+      const keyed = r.authType === 'none' || r.hasSecret;
+      return {
+        id: `rest:${r.id}`,
+        label: r.label,
+        state: (r.enabled && keyed ? 'on' : r.enabled ? 'error' : 'off') as 'on' | 'off' | 'error',
+        detail: r.enabled ? (keyed ? r.baseUrl : 'enabled, no key') : 'disabled'
+      };
+    })
+  ];
+  return { items, events: integrationEvents.list() };
 });
 
 /** A catalog MCP server that this app already bundles: turn it on for agents. */

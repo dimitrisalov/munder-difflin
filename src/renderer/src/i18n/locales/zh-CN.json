@@ -394,7 +394,18 @@
       "orgKeyDesc": "队友的安装如何找到你的实例。",
       "apiKey": "API 密钥",
       "orgKeyPlaceholder": "粘贴你的组织密钥",
-      "orgConfigOnly": "目前仅限配置。组织消息服务尚不存在，所以这里的密钥不会启动任何传输——它会被保存、显示在触发器标签页中，然后等待。"
+      "orgConfigOnly": "目前仅限配置。组织消息服务尚不存在，所以这里的密钥不会启动任何传输——它会被保存、显示在触发器标签页中，然后等待。",
+      "statusTitle": "状态",
+      "eventsTitle": "最近事件",
+      "eventsEmpty": "暂无。",
+      "eventsMore": "再显示 {{count}} 条",
+      "statusNames": {
+        "telegram": "Telegram",
+        "panel": "移动面板",
+        "slack": "Slack",
+        "webhook": "Webhooks",
+        "capabilities": "能力"
+      }
     },
     "voice": {
       "freeFlow": "自由输入",

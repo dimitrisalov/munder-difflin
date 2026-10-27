@@ -620,6 +620,11 @@ export interface WorkerSnapshot {
   /** The agent that started this temp; absent for god's workers. */
   parent?: string;
 }
+/** Settings → Connections → Status (mirrors the main handler). */
+export interface IntegrationsStatus {
+  items: { id: string; label?: string; state: 'on' | 'off' | 'error'; detail: string }[];
+  events: { at: number; source: 'telegram' | 'panel' | 'slack' | 'webhook' | 'capabilities'; level: 'info' | 'error'; text: string }[];
+}
 /** One row of the capabilities catalog (mirrors main/capabilities.ts), plus
  *  what the app can do with it here. */
 export interface CapabilityEntry {
@@ -1056,6 +1061,9 @@ const api = {
     accent?: string; provider?: string; model?: string; command?: string; isolate?: boolean;
   }): Promise<{ ok: boolean; path?: string; error?: string; dropped: string[] }> =>
     ipcRenderer.invoke('hire:exportAgent', agent),
+  /** Every outside connection's state and the last 50 events on them. */
+  integrationsStatus: (): Promise<IntegrationsStatus> =>
+    ipcRenderer.invoke('integrations:status'),
   /** Capabilities catalog (signed, public-domain list) with this machine's state. */
   capabilitiesList: (force?: boolean): Promise<CapabilitiesList> =>
     ipcRenderer.invoke('capabilities:list', force === true),

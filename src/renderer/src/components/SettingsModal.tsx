@@ -25,6 +25,7 @@ import { TelegramSettings } from './TelegramSettings';
 import { PeriodLimitsSettings } from './PeriodLimitsSettings';
 import { WorkSwitchSettings } from './WorkSwitchSettings';
 import { TempsSettings } from './TempsSettings';
+import { IntegrationsStatus } from './IntegrationsStatus';
 import { PanelSettings } from './PanelSettings';
 import { REALTIME_MODEL } from '@shared/realtimePricing';
 import { RealtimeDevicePicker } from '@/realtime/DevicePicker';
@@ -1447,6 +1448,9 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
                   {/* CONNECTIONS — everything external (MCP + Slack + webhook + REST) */}
                   {activeSection === 'Connections' && (
                     <>
+                      {/* Status of every outside connection + recent events (wave 4). */}
+                      <IntegrationsStatus />
+                      <div style={{ height: 1, background: 'var(--cth-ink-300)' }} />
                       <McpDefaultsSettings config={config} />
                       <div style={{ height: 1, background: 'var(--cth-ink-300)' }} />
                     </>
