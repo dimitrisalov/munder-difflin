@@ -3,7 +3,7 @@
 // Drawn from scratch in code, like the human cast in portraitArt.ts, on the
 // same canvases (18×28 portrait bust, 18×32 standing sprite) so the floor,
 // cards and picker treat him like anyone else. Devon Rex cues: huge low-set
-// ears, a short wedge face with high cheeks, big yellow-green eyes, a wavy white coat, a
+// ears, a round face with full cheeks, big round pale yellow eyes, a wavy white coat, a
 // long thin tail. He stands upright like the rest of the floor and wears the
 // boss's red tie.
 
@@ -19,15 +19,21 @@ const OUTLINE: RGB = [38, 34, 46];
 const FUR = { hi: [255, 253, 250] as RGB, base: [243, 240, 234] as RGB, sh: [214, 208, 201] as RGB, deep: [184, 177, 170] as RGB };
 const EAR_IN: RGB = [238, 172, 180];
 const EAR_IN_SH: RGB = [214, 140, 152];
-const IRIS: RGB = [178, 196, 58]; // yellow-green, like the real Theo's
-const PUPIL: RGB = [36, 34, 48];
-const GLINT: RGB = [250, 252, 255];
-const NOSE: RGB = [224, 136, 150];
-const MOUTH: RGB = [150, 106, 112];
+// Pale yellow eyes with a touch of green, darker under the lid, and big round
+// pupils — as in the photo of the real Theo.
+const IRIS_TOP: RGB = [192, 178, 84];
+const IRIS: RGB = [224, 210, 108];
+const IRIS_LO: RGB = [238, 230, 156];
+const PUPIL: RGB = [34, 32, 40];
+const GLINT: RGB = [252, 252, 246];
+const NOSE: RGB = [234, 160, 170];
+const MOUTH_LT: RGB = [214, 186, 190];
+// The faint grey smudges on his forehead and by the eyes.
+const SMUDGE: RGB = [206, 201, 202];
 const TIE: RGB = [176, 52, 58];
 const TIE_HI: RGB = [206, 84, 88];
 const PAW: RGB = [226, 218, 210];
-const WHISKER: RGB = [196, 196, 206];
+const WHISKER: RGB = [236, 236, 242];
 
 class Canvas {
   readonly buf: Buf;
@@ -54,13 +60,14 @@ class Canvas {
 }
 
 // ─── head ────────────────────────────────────────────────────────────────────
-// Ears: big triangles flaring out from the skull (left; the right one mirrors).
-const EAR: Array<[number, number, number]> = [[0, 2, 2], [1, 2, 3], [2, 2, 4], [3, 2, 5], [4, 2, 5], [5, 3, 6], [6, 3, 6]];
-const EAR_INNER: Array<[number, number, number]> = [[2, 3, 3], [3, 3, 4], [4, 3, 4], [5, 4, 5]];
-// Skull + face rows: [y, x0, x1] — wide cheeks, a short wedge to the chin.
+// Ears: very large, wide at the base, softly rounded tips, pink almost to the
+// rim (left; the right one mirrors).
+const EAR: Array<[number, number, number]> = [[0, 2, 2], [1, 1, 3], [2, 1, 4], [3, 1, 5], [4, 2, 6], [5, 2, 6], [6, 3, 6], [7, 4, 6]];
+const EAR_INNER: Array<[number, number, number]> = [[2, 2, 3], [3, 2, 4], [4, 3, 5], [5, 3, 5], [6, 4, 5]];
+// Skull + face rows: [y, x0, x1] — a round face with full cheeks, short chin.
 const HEAD: Array<[number, number, number]> = [
   [5, 6, 11], [6, 5, 12], [7, 4, 13], [8, 3, 14], [9, 3, 14], [10, 3, 14],
-  [11, 4, 13], [12, 4, 13], [13, 5, 12], [14, 6, 11], [15, 7, 10],
+  [11, 3, 14], [12, 4, 13], [13, 5, 12], [14, 6, 11], [15, 7, 10],
 ];
 const mirror = (x: number) => 17 - x;
 
@@ -72,7 +79,7 @@ function drawEars(c: Canvas, inner: boolean): void {
     return;
   }
   for (const [y, x0, x1] of EAR_INNER) { c.row(y, x0, x1, EAR_IN); c.row(y, mirror(x1), mirror(x0), EAR_IN); }
-  c.set(3, 4, EAR_IN_SH); c.set(mirror(3), 4, EAR_IN_SH);
+  for (const [x, y] of [[2, 3], [3, 5]] as const) { c.set(x, y, EAR_IN_SH); c.set(mirror(x), y, EAR_IN_SH); }
 }
 
 function drawSkull(c: Canvas): void {
@@ -82,22 +89,31 @@ function drawSkull(c: Canvas): void {
   c.set(6, 6, FUR.hi); c.set(7, 6, FUR.hi);
   for (let y = 8; y <= 12; y++) c.set(13, y, FUR.sh);
   c.set(14, 9, FUR.sh); c.set(14, 10, FUR.sh); c.set(12, 13, FUR.sh); c.set(11, 14, FUR.sh); c.set(10, 15, FUR.sh);
-  // The rex coat: two soft waves on the forehead.
-  for (const [x, y] of [[7, 7], [10, 7]] as const) c.set(x, y, FUR.sh);
+  // The rex coat: soft waves on the forehead, and his grey smudge by the left ear.
+  for (const [x, y] of [[8, 6], [7, 7], [10, 7]] as const) c.set(x, y, FUR.sh);
+  c.set(5, 6, SMUDGE); c.set(6, 7, SMUDGE);
 }
 
 function drawFace(c: Canvas): void {
-  // Big eyes, slit pupils, a glint.
-  for (const [x0, pupil, glint] of [[4, 5, 4], [11, 12, 13]] as const) {
-    for (let x = x0; x <= x0 + 2; x++) { c.set(x, 9, IRIS); c.set(x, 10, IRIS); }
-    c.set(pupil, 9, PUPIL); c.set(pupil, 10, PUPIL);
-    c.set(glint, 9, GLINT);
+  // Big round eyes: a 3×3 iris, darker under the lid, a round pupil, a glint.
+  for (const x0 of [4, 11]) {
+    for (let x = x0; x <= x0 + 2; x++) { c.set(x, 8, IRIS_TOP); c.set(x, 9, IRIS); c.set(x, 10, IRIS_LO); }
+    c.set(x0 + 1, 9, PUPIL); c.set(x0 + 1, 10, PUPIL);
+    c.set(x0, 8, GLINT);
   }
-  // Muzzle: cheek highlights, a pink nose, the little "w" mouth.
+  // Faint grey at the inner corners of the eyes.
+  c.set(7, 10, SMUDGE); c.set(10, 10, SMUDGE);
+  // Muzzle: whisker pads, a small pink nose, a small serious mouth.
   c.set(6, 12, FUR.hi); c.set(11, 12, FUR.hi);
   c.set(8, 11, FUR.sh); c.set(9, 11, FUR.sh);
   c.set(8, 12, NOSE); c.set(9, 12, NOSE);
-  c.set(7, 13, MOUTH); c.set(8, 14, MOUTH); c.set(9, 14, MOUTH); c.set(10, 13, MOUTH);
+  c.set(8, 13, MOUTH_LT); c.set(9, 13, MOUTH_LT);
+  c.set(7, 14, MOUTH_LT); c.set(10, 14, MOUTH_LT);
+}
+
+/** The rex coat on the body: small curls as arcs of shade. */
+function drawCurls(c: Canvas, at: ReadonlyArray<readonly [number, number]>): void {
+  for (const [x, y] of at) { c.set(x, y, FUR.sh); c.set(x + 1, y + 1, FUR.sh); }
 }
 
 /** Short, curly Devon whiskers, translucent so the outline pass leaves them thin. */
@@ -126,6 +142,7 @@ function drawBust(c: Canvas): void {
   for (const [y, x0, x1] of rows) c.row(y, x0, x1, FUR.base);
   for (let y = 22; y <= 27; y++) { c.set(3, y, FUR.sh); c.set(14, y, FUR.sh); }
   for (const [x, y] of [[6, 21], [11, 21], [7, 24], [10, 25]] as const) c.set(x, y, FUR.hi); // chest fluff
+  drawCurls(c, [[4, 21], [11, 20], [5, 24], [12, 23], [3, 26], [6, 26], [10, 26], [13, 26]]);
   drawTie(c, 19, 24);
 }
 
@@ -140,7 +157,10 @@ function drawStanding(c: Canvas, phase: number, back: boolean): void {
   c.set(4, 23, PAW); c.set(13, 23, PAW);
   if (!back) {
     for (const [x, y] of [[7, 21], [10, 23]] as const) c.set(x, y, FUR.hi);
+    drawCurls(c, [[5, 19], [10, 19], [6, 22], [10, 22]]);
     drawTie(c, 18, 22);
+  } else {
+    drawCurls(c, [[6, 19], [9, 20], [6, 23], [10, 23]]);
   }
   // Legs, one lifted per walk phase. Set wide apart: a narrower gap would be
   // filled solid by the outline and read as dark trousers on a white cat.

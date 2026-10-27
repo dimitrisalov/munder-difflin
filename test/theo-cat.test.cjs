@@ -21,11 +21,12 @@ test('portrait and walk frames have the cast canvas sizes', () => {
   for (const b of [...s.front, ...s.back]) assert.equal(b.length, 18 * 32 * 4);
 });
 
-test('he is white, with pink ears and yellow-green eyes, in a red tie', () => {
+test('he is white, with pink ears and pale yellow eyes, in a red tie', () => {
   const p = cat.catPortraitBuf();
   assert.deepEqual(rgb(p, 18, 8, 7), [243, 240, 234], 'white forehead');
   assert.deepEqual(rgb(p, 18, 3, 3), [238, 172, 180], 'pink inner ear');
-  assert.deepEqual(rgb(p, 18, 6, 9), [178, 196, 58], 'yellow-green eye');
+  assert.deepEqual(rgb(p, 18, 6, 9), [224, 210, 108], 'yellow eye');
+  assert.deepEqual(rgb(p, 18, 5, 10), [34, 32, 40], 'round pupil, not a slit: dark below centre too');
   assert.deepEqual(rgb(p, 18, 9, 21), [176, 52, 58], 'red tie');
 });
 
