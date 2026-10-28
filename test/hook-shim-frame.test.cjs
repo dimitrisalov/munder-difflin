@@ -11,7 +11,8 @@ const net = require('node:net');
 const { spawn } = require('node:child_process');
 
 const src = readFileSync(join(__dirname, '..', 'src', 'main', 'hive.ts'), 'utf8');
-const m = /const HOOK_SHIM = `([\s\S]*?)`;\n/.exec(src);
+// \r?: a Windows checkout (core.autocrlf) has CRLF line ends.
+const m = /const HOOK_SHIM = `([\s\S]*?)`;\r?\n/.exec(src);
 const SHIM = m && eval('`' + m[1] + '`');
 const MAX_FRAME = 256 * 1024;
 
