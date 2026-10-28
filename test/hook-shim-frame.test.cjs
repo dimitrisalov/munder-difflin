@@ -16,7 +16,9 @@ const SHIM = m && eval('`' + m[1] + '`');
 const MAX_FRAME = 256 * 1024;
 
 function runShim(dir, payload) {
-  const sock = join(dir, `s${Math.random().toString(36).slice(2)}.sock`);
+  const id = Math.random().toString(36).slice(2);
+  // Windows sockets are named pipes in their own namespace, like HIVE_SOCK there.
+  const sock = process.platform === 'win32' ? `\\\\.\\pipe\\shim-test-${id}` : join(dir, `s${id}.sock`);
   const shim = join(dir, 'hive-hook.cjs');
   writeFileSync(shim, SHIM);
   return new Promise((resolve, reject) => {
