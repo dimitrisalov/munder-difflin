@@ -63,14 +63,14 @@ export const LOFT_LAYOUT: Layout = {
   ],
   items: [
     // ─── Mia's atelier: the art director's studio ──────────────────────────
-    // A window with her warm stone under it, the moodboard and her design
-    // books on the wall, the big layout table with its lamp, the easel, her
-    // desk by the door. The stone, board and table are drawn in code (props).
+    // A window with her warm stone under it, fairy lights over the moodboard,
+    // a neon pen nib, her design books, the big layout table with its lamp,
+    // the easel with paint cans and splashes, a plan chest of prints, her desk
+    // by the door with a second screen, a palette rug. Most of it is drawn in
+    // code (props below); the window, books, desk and plants are tiles.
     { item: 'window-wood', x: 1, y: 1 },
-    { item: 'picture-small', x: 7, y: 1 },
     { item: 'bookcase-3', x: 8, y: 1 },
     { item: 'desk', x: 6, y: 5 },
-    { item: 'rug-blue-gold', x: 2, y: 7 },
     { item: 'plant-white', x: 1, y: 7 }, { item: 'plant-fern', x: 9, y: 4 },
 
     // ─── library: books along the top wall ─────────────────────────────────
@@ -162,11 +162,20 @@ export const LOFT_LAYOUT: Layout = {
     // the bell on the reception counter
     { kind: 'bell', x: 18, y: 20, onTop: true },
     // Mia's atelier: the warm stone under the window (she lies on it), the
-    // moodboard on the wall, the layout table, the easel
+    // moodboard and the neon on the wall with fairy lights over them, the
+    // layout table, the easel with its paint, the plan chest, a second screen
+    // on her desk, the palette rug
     { kind: 'heat-stone', x: 1, y: 3, walkable: true },
     { kind: 'moodboard', x: 3, y: 1, onTop: true },
+    { kind: 'neon-nib', x: 7, y: 1, onTop: true },
+    { kind: 'string-lights', x: 1, y: 1, onTop: true },
     { kind: 'layout-table', x: 3, y: 4 },
     { kind: 'easel', x: 1, y: 5 },
+    { kind: 'paint-cans', x: 1, y: 4 },
+    { kind: 'paint-splatter', x: 2, y: 6, walkable: true },
+    { kind: 'plan-chest', x: 6, y: 3 },
+    { kind: 'pen-display', x: 6, y: 5 },
+    { kind: 'palette-rug', x: 2, y: 7, walkable: true },
   ],
   points: [
     { name: 'entrance', x: 19, y: 24 },
@@ -208,11 +217,15 @@ export const LOFT_ERRANDS: ErrandSpot[] = [
 ];
 
 /** What glows when it gets dark (besides the lit monitors): the fireplace, the
- *  vending machine, the lamp on Mia's layout table and her warm stone. Tile
- *  coordinates of the light's centre. */
+ *  vending machine, and in Mia's atelier the lamp on her layout table, her warm
+ *  stone, the neon and the fairy lights. Tile coordinates of the light's centre. */
 export const LOFT_LIGHTS: NightLight[] = [
   { x: 5.3, y: 4.5, radius: 24, color: 0xffcf8a },
   { x: 2, y: 3.6, radius: 14, color: 0xff8a4a },
+  { x: 7.5, y: 2, radius: 16, color: 0xff6f61 },                   // the neon nib
+  { x: 2.3, y: 1.3, radius: 9, color: 0xffd9a0 },                  // fairy lights
+  { x: 4.6, y: 1.3, radius: 9, color: 0xffd9a0 },
+  { x: 6.6, y: 1.3, radius: 9, color: 0xffd9a0 },
   { x: 2, y: 19.8, radius: 36, color: 0xff9a3d, flicker: true },
   { x: 34, y: 21, radius: 26, color: 0x9fe6ff },
 ];

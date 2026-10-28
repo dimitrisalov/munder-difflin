@@ -226,7 +226,10 @@ test("Mia's atelier: a walled room with a door into the library, her desk, her t
   const seat = r.seats.find((s) => s.name === 'atelier-seat-1');
   assert.deepEqual(seat && [seat.x, seat.y, seat.zone], [7, 7, 'atelier']);
   const kinds = r.props.filter((p) => p.x <= 9 && p.y <= 8).map((p) => p.kind).sort();
-  assert.deepEqual(kinds, ['easel', 'heat-stone', 'layout-table', 'moodboard']);
+  for (const k of ['easel', 'heat-stone', 'layout-table', 'moodboard', 'neon-nib', 'palette-rug', 'paint-cans', 'plan-chest', 'string-lights']) {
+    assert.ok(kinds.includes(k), k);
+  }
+  assert.ok(!LOFT_LAYOUT.items.some((i) => i.item.startsWith('rug-') && i.x <= 9 && i.y <= 8), 'the tile rug gave way to the palette rug');
   assert.equal(at(r.map, 'collision', 1, 3), 0, 'she can lie on the warm stone');
 });
 

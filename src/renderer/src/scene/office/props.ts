@@ -12,7 +12,8 @@ export type PropKind =
   | 'bong' | 'grinder' | 'console' | 'gaming-pc'
   | 'cat-bed' | 'scratching-post' | 'food-bowl'
   | 'bell' | 'easel'
-  | 'heat-stone' | 'moodboard' | 'layout-table';
+  | 'heat-stone' | 'moodboard' | 'layout-table'
+  | 'palette-rug' | 'neon-nib' | 'string-lights' | 'plan-chest' | 'paint-cans' | 'paint-splatter' | 'pen-display';
 
 /** Footprint in tiles (w × h), for the map builder. */
 export const PROP_SIZE: Record<PropKind, { w: number; h: number }> = {
@@ -20,11 +21,16 @@ export const PROP_SIZE: Record<PropKind, { w: number; h: number }> = {
   'cat-bed': { w: 1, h: 1 }, 'scratching-post': { w: 1, h: 2 }, 'food-bowl': { w: 1, h: 1 },
   bell: { w: 1, h: 1 }, easel: { w: 1, h: 2 },
   'heat-stone': { w: 2, h: 1 }, moodboard: { w: 4, h: 2 }, 'layout-table': { w: 3, h: 2 },
+  'palette-rug': { w: 4, h: 2 }, 'neon-nib': { w: 1, h: 2 },
+  // two rows tall only so it sorts with (and over) the moodboard; it hangs
+  // across the top of the wall
+  'string-lights': { w: 6, h: 2 },
+  'plan-chest': { w: 2, h: 1 }, 'paint-cans': { w: 1, h: 1 }, 'paint-splatter': { w: 1, h: 1 }, 'pen-display': { w: 1, h: 1 },
 };
 
 /** Lies flat on the floor: drawn under anyone standing on it (Theo in his bed,
  *  Mia on her warm stone). */
-export const FLAT_PROPS: ReadonlySet<string> = new Set(['cat-bed', 'heat-stone']);
+export const FLAT_PROPS: ReadonlySet<string> = new Set(['cat-bed', 'heat-stone', 'palette-rug', 'paint-splatter']);
 
 export function isPropKind(kind: string): kind is PropKind {
   return Object.prototype.hasOwnProperty.call(PROP_SIZE, kind);
@@ -193,6 +199,90 @@ export function drawProp(kind: string, g: Graphics, t = 0): void {
       g.moveTo(44, 15).lineTo(41, 6).lineTo(37, 3).stroke({ width: 1, color: 0x3a3a44 });
       g.poly([33, 2, 39, 0, 41, 5, 35, 7]).fill(0xe2665f).stroke({ width: 0.8, color: INK });
       g.poly([35, 7, 41, 5, 40, 12, 30, 14]).fill({ color: 0xfff2c4, alpha: 0.28 });
+      break;
+    }
+    case 'palette-rug': {
+      // a rug cut like a painter's palette: a thumb hole showing the floor,
+      // paint blobs round the edge
+      g.ellipse(32, 16, 30, 14).fill(0xf1e6d0).stroke({ width: 1, color: INK });
+      g.ellipse(32, 16, 27, 11.5).stroke({ width: 1, color: 0xd9c8a8 });
+      g.ellipse(46, 21, 4.5, 3.2).fill(0xb7ac93).stroke({ width: 1, color: INK }); // thumb hole (the atelier's floor)
+      const blobs: Array<[number, number, number]> = [
+        [12, 9, 0xe2665f], [22, 6, 0xe0b84a], [33, 5.5, 0x8fb39a], [44, 7, 0x5bb0d8], [54, 12, 0x9b7ad8], [16, 20, 0x2e3a5c],
+      ];
+      for (const [x, y, c] of blobs) {
+        g.ellipse(x, y, 4, 3).fill(c);
+        g.rect(x - 2, y - 2, 1.5, 1).fill({ color: 0xffffff, alpha: 0.5 });
+      }
+      g.ellipse(28, 17, 5, 2.5).fill({ color: 0xe2665f, alpha: 0.55 });         // a smear of mixed colour
+      g.ellipse(31, 18, 4, 2).fill({ color: 0x5bb0d8, alpha: 0.45 });
+      break;
+    }
+    case 'neon-nib': {
+      // a neon sign on the wall: a pen nib in coral tube on a dark board
+      g.rect(1, 3, 14, 26).fill(0x2b2836).stroke({ width: 1, color: INK });
+      const nib = [8, 7, 13, 17, 8, 26, 3, 17];
+      g.poly(nib).stroke({ width: 3, color: 0xff6f61, alpha: 0.3 });
+      g.poly(nib).stroke({ width: 1.2, color: 0xffb3a8 });
+      g.moveTo(8, 13).lineTo(8, 21).stroke({ width: 1, color: 0xffb3a8 });
+      g.circle(8, 13, 1.6).stroke({ width: 1, color: 0xffb3a8 });
+      break;
+    }
+    case 'string-lights': {
+      // fairy lights hung across the window and the moodboard: a sagging wire,
+      // bulbs in the studio's colours
+      const span = 32;
+      const yAt = (x: number): number => 1 + 3 * Math.sin(Math.PI * ((x % span) / span));
+      g.moveTo(0, yAt(0));
+      for (let x = 2; x <= 96; x += 2) g.lineTo(x, yAt(x));
+      g.stroke({ width: 0.6, color: 0x3a3a44 });
+      const bulbs = [0xfff3c4, 0xe2665f, 0xe0b84a, 0x8fe0c0, 0xfff3c4, 0x9bb8ff];
+      for (let i = 0, x = 5; x < 96; x += 9, i++) {
+        g.circle(x, yAt(x) + 1.6, 1.3).fill(bulbs[i % bulbs.length]);
+      }
+      break;
+    }
+    case 'plan-chest': {
+      // a low plan chest for prints, rolled posters sticking out of a tube,
+      // magazines stacked on top
+      g.rect(1, 6, 30, 10).fill(0x4a5a6a).stroke({ width: 1, color: INK });
+      for (const y of [9, 12]) g.rect(2, y, 28, 0.6).fill(0x2f3b47);
+      for (const y of [7.5, 10.5, 13.5]) { g.rect(9, y, 3, 0.8).fill(0xc9ced6); g.rect(20, y, 3, 0.8).fill(0xc9ced6); }
+      g.rect(3, 3, 9, 3).fill(0xe2665f); g.rect(4, 1.5, 8, 1.6).fill(0xf3ead8); g.rect(3.5, 0.5, 7, 1.2).fill(0x2e3a5c);
+      g.rect(23, -2, 5, 8).fill(0xb8956a).stroke({ width: 0.6, color: INK });   // the tube
+      g.rect(23.5, -7, 1.6, 6).fill(0xf3ead8); g.rect(25.5, -9, 1.6, 8).fill(0x8fb39a); g.rect(26.8, -6, 1.4, 5).fill(0xe0b84a);
+      break;
+    }
+    case 'paint-cans': {
+      // two paint cans, one dripping, and a jar of brushes
+      g.rect(1, 8, 6, 7).fill(0xe2665f).stroke({ width: 0.8, color: INK });
+      g.ellipse(4, 8, 3, 1.2).fill(0xc94f48);
+      g.rect(2, 10, 1, 3).fill({ color: 0xffffff, alpha: 0.4 });
+      g.rect(6, 14, 1, 2).fill(0xe2665f);
+      g.rect(8, 10, 5, 5).fill(0x5bb0a0).stroke({ width: 0.8, color: INK });
+      g.ellipse(10.5, 10, 2.5, 1).fill(0x3f8f80);
+      g.rect(12, 6, 3, 9).fill({ color: 0xcfe8ef, alpha: 0.8 }).stroke({ width: 0.6, color: INK }); // the jar
+      g.rect(12.6, 1, 0.8, 7).fill(0x9a6a3a); g.rect(14, 2.5, 0.8, 6).fill(0x7a5030);
+      g.rect(12.3, 0, 1.4, 1.6).fill(0xe0b84a); g.rect(13.8, 1.5, 1.4, 1.4).fill(0x9b7ad8);
+      break;
+    }
+    case 'paint-splatter': {
+      // paint on the floor under the easel: drips and splashes
+      const spots: Array<[number, number, number, number]> = [
+        [5, 6, 2.5, 0xe2665f], [10, 9, 1.8, 0x5bb0d8], [7, 12, 1.4, 0xe0b84a], [12, 4, 1, 0x9b7ad8], [3, 11, 1, 0x8fb39a], [13, 13, 1.2, 0xe2665f],
+      ];
+      for (const [x, y, r, c] of spots) g.circle(x, y, r).fill({ color: c, alpha: 0.75 });
+      g.ellipse(6, 7, 1, 0.6).fill({ color: 0xffffff, alpha: 0.4 });
+      break;
+    }
+    case 'pen-display': {
+      // a second screen on an arm at the desk's end: the layout she is on
+      g.rect(7.5, 11, 1.2, 5).fill(0x3a3a44);
+      g.rect(1, 1, 14, 10).fill(0x1d1b24).stroke({ width: 1, color: INK });
+      g.rect(2, 2, 12, 8).fill(0xf6f1e6);
+      g.rect(3, 3, 6, 3).fill(0xe2665f);
+      g.rect(10, 3, 3, 6).fill(0x2e3a5c);
+      g.rect(3, 7, 5, 0.8).fill(0x9a9aa8); g.rect(3, 8.5, 4, 0.8).fill(0x9a9aa8);
       break;
     }
   }
