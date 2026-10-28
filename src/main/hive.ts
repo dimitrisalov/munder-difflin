@@ -3190,6 +3190,22 @@ const HOOK_SHIM = `#!/usr/bin/env node
 'use strict';
 const net = require('net');
 const isStatus = process.argv.includes('--status');
+// The harness drops a frame over 256 KB whole, and the event with it: a Read of
+// a picture carries the picture in tool_response, so its PostToolUse never
+// arrived and the agent looked stuck inside the call. Send the event without
+// the bulk instead: tool_response replaced by its size, long strings cut.
+const FRAME_LIMIT = 200 * 1024;
+function fit(p) {
+  let s = JSON.stringify(p);
+  if (Buffer.byteLength(s) <= FRAME_LIMIT) return s;
+  const cut = (v) => (typeof v === 'string' && v.length > 4000 ? v.slice(0, 4000) + '…[' + v.length + ' chars]' : v);
+  if (p.tool_response !== undefined) p.tool_response = '[omitted by the hook shim: ' + JSON.stringify(p.tool_response).length + ' chars]';
+  if (p.tool_input && typeof p.tool_input === 'object') for (const k of Object.keys(p.tool_input)) p.tool_input[k] = cut(p.tool_input[k]);
+  for (const k of ['prompt', 'message']) if (typeof p[k] === 'string') p[k] = cut(p[k]);
+  s = JSON.stringify(p);
+  if (Buffer.byteLength(s) > FRAME_LIMIT) { p.tool_input = '[omitted by the hook shim]'; s = JSON.stringify(p); }
+  return s;
+}
 let data = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (d) => { data += d; });
@@ -3226,7 +3242,7 @@ process.stdin.on('end', () => {
   if (!sock) { process.exit(0); }
   let resp = '';
   const done = (code) => { if (resp) process.stdout.write(resp); process.exit(code); };
-  const c = net.createConnection(sock, () => c.write(JSON.stringify(payload) + '\\n'));
+  const c = net.createConnection(sock, () => c.write(fit(payload) + '\\n'));
   c.setEncoding('utf8');
   c.on('data', (d) => { resp += d; });
   c.on('end', () => done(0));
