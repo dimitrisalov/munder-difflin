@@ -796,6 +796,12 @@ export class PtyManager {
     }));
   }
 
+  /** The most recent raw output (the bounded ring), e.g. to show the owner the
+   *  question a CLI is waiting on. Undefined if no such PTY. */
+  tail(id: string): string | undefined {
+    return this.sessions.get(id)?.tail;
+  }
+
   /** Epoch ms of this PTY's most recent output, or undefined if no such PTY. */
   lastOutputAt(id: string): number | undefined {
     return this.sessions.get(id)?.lastOutputAt;

@@ -30,7 +30,7 @@ export type TelegramDecision =
   | { kind: 'pair'; userId: number; chatId: number; name: string }
   | { kind: 'command'; cmd: string; args: string; chatId: number; messageId: number }
   | { kind: 'message'; text: string; files: TelegramFileRef[]; voice: TelegramVoiceRef | null; chatId: number; messageId: number; replyTo: number | null }
-  | { kind: 'callback'; callbackId: string; chatId: number; messageId: number; action: 'answer' | 'dismiss'; key: string; option?: number };
+  | { kind: 'callback'; callbackId: string; chatId: number; messageId: number; action: 'answer' | 'dismiss' | 'prompt'; key: string; option?: number; choice?: 'yes' | 'no' };
 
 /** A voice note / audio / round video to transcribe (telegram-core extractVoice). */
 export interface TelegramVoiceRef {

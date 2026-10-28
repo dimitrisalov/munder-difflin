@@ -128,6 +128,9 @@ function parseCallbackData(data) {
   if (m) return { action: 'answer', key: m[1], option: Number(m[2]) };
   m = /^d:([A-Za-z0-9]{6,16})$/.exec(data);
   if (m) return { action: 'dismiss', key: m[1] };
+  // A question an agent is stuck on in its terminal (needs-you-core.cjs).
+  m = /^ny:([A-Za-z0-9]{6,16}):([yn])$/.exec(data);
+  if (m) return { action: 'prompt', key: m[1], choice: m[2] === 'y' ? 'yes' : 'no' };
   return null;
 }
 
@@ -487,6 +490,8 @@ const STRINGS = {
     dismissButton: '✖ Снять вопрос',
     answerPicked: (n) => `Выбран вариант ${n}`,
     dismissed: 'Вопрос снят. Карточка осталась на канбане.',
+    promptSent: (yes) => (yes ? 'Отправил «да» в терминал агента.' : 'Отправил «нет» в терминал агента.'),
+    promptGone: 'На этот вопрос уже ответили, агент продолжил.',
     heard: (t) => `🎙 Распознал: «${t}»`,
     voiceOff: 'Голосовые пока не распознаются: в настройках Telegram не выбран способ распознавания.',
     voiceFailed: (e) => `Не получилось распознать голосовое: ${e}`
@@ -543,6 +548,8 @@ const STRINGS = {
     dismissButton: '✖ Dismiss the question',
     answerPicked: (n) => `Option ${n} chosen`,
     dismissed: 'Question dismissed. The card stays on the board.',
+    promptSent: (yes) => (yes ? 'Sent "yes" to the agent\'s terminal.' : 'Sent "no" to the agent\'s terminal.'),
+    promptGone: 'That question was already answered; the agent moved on.',
     heard: (t) => `🎙 Heard: “${t}”`,
     voiceOff: 'Voice notes are not transcribed yet: no transcription engine is chosen in the Telegram settings.',
     voiceFailed: (e) => `Could not transcribe the voice note: ${e}`

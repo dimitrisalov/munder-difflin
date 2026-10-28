@@ -338,6 +338,26 @@ interface HangGuardCore {
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const hangCore = require('./hang-guard-core.cjs') as HangGuardCore;
 const hangGuard = new hangCore.HangGuard();
+// An agent stopped on a question in its own terminal (a permission prompt):
+// after a short wait the owner gets it in Telegram with Yes/No buttons that
+// are typed into that terminal. Decisions: needs-you-core.cjs.
+interface TerminalPrompt { question: string; options: string[]; detail: string }
+interface NeedsYouWaiting { agentId: string; since: number; message: string; key: string; notified?: boolean; messageIds?: number[] }
+interface NeedsYouCore {
+  NeedsYou: new () => {
+    note: (agentId: string | undefined, event: string, message: string | undefined) => NeedsYouWaiting | null;
+    due: (now: number, live?: Set<string>) => NeedsYouWaiting[];
+    sent: (agentId: string, ids: number[]) => void;
+    byKey: (key: string) => NeedsYouWaiting | null;
+    forget: (agentId: string) => void;
+  };
+  promptFromTail: (tail: string | undefined) => TerminalPrompt;
+  formatNeedsYou: (o: { agentId: string; name?: string; message?: string; prompt: TerminalPrompt }, lang: string) => string;
+  needsYouKeyboard: (key: string, prompt: TerminalPrompt, lang: string) => unknown;
+}
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const needsYouCore = require('./needs-you-core.cjs') as NeedsYouCore;
+const needsYou = new needsYouCore.NeedsYou();
 // Worker inbox-wake watchdog (#151): finds idle workers with undrained inbox mail
 // and types the same guarded nudge the renderer would have (so a throttled
 // background window can't leave a worker parked on an unread inbox forever).
@@ -356,6 +376,10 @@ const hookServer = new HookServer(
     workerWake.noteHook(agentId, event, message);
     const ended = hangGuard.note(agentId, event, { message, toolName, toolInput });
     if (ended && agentId) console.log(`[hang-guard] ${agentId} is taking turns again after the interrupt`);
+    // The question was answered (here, in the app or from Telegram): take the
+    // buttons off the Telegram message.
+    const answered = needsYou.note(agentId, event, message);
+    if (answered?.messageIds?.length) clearNeedsYouButtons(answered.messageIds);
   }
 );
 const memory = new MemoryManager(
@@ -507,6 +531,7 @@ function teardownPty(id: string): void {
     // Drop watchdog state so a dead agent can't get nudged or leak its grace.
     try { workerWake.forget(agentId, id); } catch { /* best-effort */ }
     try { hangGuard.forget(agentId); } catch { /* best-effort */ }
+    try { needsYou.forget(agentId); } catch { /* best-effort */ }
     // Drop breaker state so a dead agent can't leak/zombie a tripped level.
     try { breaker.forget(agentId); } catch { /* best-effort */ }
     // A replacement using this id needs a new usage counter, not the dead PTY's.
@@ -1960,6 +1985,8 @@ interface TelegramStrings {
   panelOff: string;
   answerPicked: (n: number) => string;
   dismissed: string;
+  promptSent: (yes: boolean) => string;
+  promptGone: string;
   heard: (t: string) => string;
   voiceOff: string;
   voiceFailed: (e: string) => string;
@@ -2238,6 +2265,23 @@ async function handleTelegramCallback(d: Extract<TelegramDecision, { kind: 'call
   const S = telegramStrings(lang);
   const token = telegramSettings().botToken;
   if (!token) return;
+  if (d.action === 'prompt') {
+    // A question an agent waits on in its terminal: Enter takes the highlighted
+    // option, Esc says no. Only while that same question is still open.
+    const w = needsYou.byKey(d.key);
+    const ptyId = w ? ptyForAgent(w.agentId) : undefined;
+    if (!w || !ptyId) {
+      await answerCallback(token, d.callbackId, S.promptGone);
+      await editReplyMarkup(token, d.chatId, d.messageId, null);
+      return;
+    }
+    const yes = d.choice === 'yes';
+    const r = ptyManager.write(ptyId, yes ? '\r' : '\x1b');
+    await answerCallback(token, d.callbackId, r.ok ? S.promptSent(yes) : S.promptGone);
+    await editReplyMarkup(token, d.chatId, d.messageId, null);
+    integrationEvents.push('telegram', `owner answered ${yes ? 'yes' : 'no'} to ${w.agentId}'s terminal question`);
+    return;
+  }
   const entry = telegramRuntime().askButtons?.[d.key];
   if (!entry || !hive.enabled()) {
     await answerCallback(token, d.callbackId, S.answerStale);
@@ -3914,7 +3958,10 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
           skillsDir: skillsResourceDir(),
           // The shared palace is mutated by the agent's own `mempalace` calls, so
           // the OS sandbox must let it through (empty when memory is off).
-          extraWritableDirs: [memory.env().MEMPALACE_PALACE_PATH].filter((p): p is string => !!p)
+          extraWritableDirs: [
+            memory.env().MEMPALACE_PALACE_PATH,
+            ...(opts.hive.isGod ? godFloorDirs(opts.cwd) : [])
+          ].filter((p): p is string => !!p)
         }
       );
       opts.args = [...(opts.args ?? []), ...inj.args];
@@ -6911,6 +6958,50 @@ function runWorkerWakeBeat(): void {
   }
 }
 
+/** Folders the boss may read without asking: the registered repos and every
+ *  agent's working folder. Reviewing an agent's work (Mia's slides in
+ *  D:\AI\work\design) stopped Theo on "Allow this read outside the working
+ *  directories?" for as long as nobody was at the PC (28.10). */
+function godFloorDirs(ownCwd: string | undefined): string[] {
+  const dirs = new Set<string>(readConfig().registeredRepos ?? []);
+  try {
+    for (const a of Object.values(hive.registry().agents ?? {})) if (a && !a.archived && a.cwd) dirs.add(a.cwd);
+  } catch { /* no hive yet */ }
+  if (ownCwd) dirs.delete(ownCwd);
+  return [...dirs].filter((d) => { try { return statSync(d).isDirectory(); } catch { return false; } });
+}
+
+/** Remove the Yes/No buttons from the Telegram messages of a question that has
+ *  been answered. Best-effort. */
+function clearNeedsYouButtons(messageIds: number[]): void {
+  const s = telegramSettings();
+  if (!s.botToken || s.ownerChatId === undefined) return;
+  for (const id of messageIds) void editReplyMarkup(s.botToken, s.ownerChatId, id, null).catch(() => { /* best-effort */ });
+}
+
+/** Tell the owner in Telegram about every agent that has been waiting on a
+ *  terminal question for a while: who, what (read off its screen), buttons. */
+async function runNeedsYouBeat(): Promise<void> {
+  if (!hive.enabled()) return;
+  const reg = hive.registry();
+  const live = new Set(Object.keys(reg?.agents ?? {}).filter((id) => !!ptyForAgent(id)));
+  const due = needsYou.due(Date.now(), live);
+  if (due.length === 0) return;
+  const s = telegramSettings();
+  const lang = s.lang ?? 'ru';
+  for (const w of due) {
+    const name = reg.agents[w.agentId]?.name ?? w.agentId;
+    const ptyId = ptyForAgent(w.agentId);
+    const prompt = needsYouCore.promptFromTail(ptyId ? ptyManager.tail(ptyId) : undefined);
+    console.warn(`[needs-you] ${name} is waiting on a question in its terminal: ${w.message}${prompt.question ? ` — ${prompt.question}` : ''}`);
+    if (!s.botToken || s.ownerChatId === undefined) continue;
+    const html = needsYouCore.formatNeedsYou({ agentId: w.agentId, name, message: w.message, prompt: { ...prompt, detail: officeLogCore.maskSecrets(prompt.detail) } }, lang);
+    const ids = await telegramSendToOwner(html, undefined, needsYouCore.needsYouKeyboard(w.key, prompt, lang));
+    needsYou.sent(w.agentId, ids);
+    if (ids.length) integrationEvents.push('telegram', `${name} waits on a terminal question: told the owner`);
+  }
+}
+
 /** How often the hang guard looks for an agent stuck inside one tool call. */
 const HANG_GUARD_POLL_MS = 30_000;
 let hangGuardTimer: ReturnType<typeof setInterval> | null = null;
@@ -6978,7 +7069,10 @@ function armAlwaysOnBeats(): void {
   workerWakeTimer = setInterval(() => { try { runWorkerWakeBeat(); } catch (e) { console.error('[worker-wake beat]', e); } }, WORKER_WAKE_POLL_MS);
   runWorkerWakeBeat(); // catch-up on arm — power-resume re-arms and drains the backlog
   if (hangGuardTimer) clearInterval(hangGuardTimer);
-  hangGuardTimer = setInterval(() => { try { runHangGuardBeat(); } catch (e) { console.error('[hang-guard beat]', e); } }, HANG_GUARD_POLL_MS);
+  hangGuardTimer = setInterval(() => {
+    try { runHangGuardBeat(); } catch (e) { console.error('[hang-guard beat]', e); }
+    runNeedsYouBeat().catch((e) => console.error('[needs-you beat]', e));
+  }, HANG_GUARD_POLL_MS);
   // The hook socket is the whole control plane; a session where it is silently
   // unbound looks exactly like "no workers have spawned yet" (#277). Verify it
   // — bound, and the path still ours — and re-bind when it is not.
