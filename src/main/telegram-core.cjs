@@ -321,14 +321,15 @@ function askKeyboard(shortKey, options, lang) {
 /**
  * Bounded map from a Telegram message we sent → what it was about, so the
  * owner's reply to it can be routed. Insertion-ordered; oldest evicted first.
- * Entries: { kind: 'ask', taskId, q } | { kind: 'task', taskId }.
+ * Entries: { kind: 'ask', taskId, q } | { kind: 'task', taskId }
+ *        | { kind: 'chat', conv } (a message in a conversation with the boss).
  */
 class MessageLedger {
   constructor(maxSize = LEDGER_MAX, entries) {
     this.maxSize = maxSize;
     this._map = new Map();
     for (const [k, v] of Array.isArray(entries) ? entries : []) {
-      if (typeof k === 'number' && v && typeof v.taskId === 'string') this.set(k, v);
+      if (typeof k === 'number' && v && (typeof v.taskId === 'string' || typeof v.conv === 'string')) this.set(k, v);
     }
   }
   set(messageId, entry) {
@@ -339,6 +340,91 @@ class MessageLedger {
   get(messageId) { return this._map.get(messageId); }
   get size() { return this._map.size; }
   toJSON() { return [...this._map.entries()]; }
+}
+
+// ─── Conversations with the boss ────────────────────────────────────────────
+//
+// The owner writes to the boss the way one writes to a CEO: questions, news,
+// instructions, back and forth. Messages belong to a conversation, not each to
+// a task: a reply to a message of the conversation continues it, and so does a
+// message soon after the last one; /new or a long pause starts a new one. The
+// boss answers himself and opens ONE card per job (through the reply helper),
+// so a conversation about one job never turns into a pile of cards.
+
+/** A pause this long and the next message starts a new conversation. */
+const CONVERSATION_IDLE_MS = 30 * 60 * 1000;
+
+function newConvId(rand = crypto.randomBytes) {
+  return `conv-${rand(4).toString('hex')}`;
+}
+
+/**
+ * Which conversation a new owner message belongs to.
+ * `entry`: the ledger entry of the message it replies to (if any);
+ * `taskConv`: the conversation of the card that entry names (if any);
+ * `last`: { id, at } of the latest conversation; `newId` for a fresh one.
+ * Returns { conv, via: 'reply' | 'card' | 'recent' | 'new', card? }.
+ */
+function pickConversation(o) {
+  const e = o.entry;
+  if (e && typeof e.conv === 'string') return { conv: e.conv, via: 'reply' };
+  if (e && typeof o.taskConv === 'string') return { conv: o.taskConv, via: 'reply' };
+  // A reply to a card from before conversations (or the panel): a new
+  // conversation that carries that card.
+  if (e && typeof e.taskId === 'string') return { conv: o.newId, via: 'card', card: e.taskId };
+  if (o.last && typeof o.last.id === 'string' && o.now - o.last.at < CONVERSATION_IDLE_MS) return { conv: o.last.id, via: 'recent' };
+  return { conv: o.newId, via: 'new' };
+}
+
+/** The cards of a conversation: linked by `telegram.conv`, plus `extraIds`
+ *  (a card the owner replied to), oldest first. */
+function conversationCards(tasks, conv, extraIds = []) {
+  const extra = new Set(extraIds);
+  return (Array.isArray(tasks) ? tasks : [])
+    .filter((t) => t && ((t.telegram && t.telegram.conv === conv) || extra.has(t.id)))
+    .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+}
+
+/** The card a follow-up message is written onto: the newest one still open. */
+function openCardOf(cards) {
+  const open = cards.filter((t) => t.status !== 'done');
+  return open.length ? open[open.length - 1] : null;
+}
+
+/** A card's description with the owner's follow-up appended. */
+function appendOwnerNote(description, text, stamp) {
+  const base = String(description || '').replace(/\s+$/, '');
+  return `${base}${base ? '\n\n' : ''}— Owner, ${stamp} (Telegram): ${String(text || '').trim()}`;
+}
+
+/**
+ * The boss's instruction for one owner message in a conversation. `cards`:
+ * [{ id, key?, title, status }] already in this conversation; `noted`: the
+ * card the message was also written onto.
+ */
+function buildChatProtocol(opts) {
+  const run = `"${opts.nodeCommand}" "${opts.helperPath}"`;
+  const reply = `${run} --reply-to ${opts.messageId} --text "<message>"`;
+  const newCard = `${run} --new-task "<short title>" --conv ${opts.conv} --reply-to ${opts.messageId} --description "<the brief>"`;
+  const result = `${run} --reply-to ${opts.messageId} --task <card id> --text "<result>"`;
+  const cards = Array.isArray(opts.cards) ? opts.cards : [];
+  const list = cards.map((c) => `${c.key ? `${c.key} ` : ''}(${c.id}) "${c.title}" — ${c.status}`).join('; ');
+  return [
+    `[TELEGRAM CHAT — the owner wrote to you from Telegram on their phone, the way one writes to a CEO. Conversation ${opts.conv}.]`,
+    `1. ANSWER THEM YOURSELF, like a person, in the language they wrote in: ${reply}`,
+    '   (long text: --text-file <path>; a file: --file <absolute path>). Short and specific. Never a bare "noted" or "accepted": say what you know, what you will do, or what you need from them.',
+    '2. NOT EVERY MESSAGE IS A TASK. A question, a status check, news or a remark gets an answer, not a card: answer from what you know (tasks.json, fleet.json, memory, the cards). If something is unclear, ask in your reply.',
+    cards.length
+      ? `3. THIS CONVERSATION ALREADY HAS ${cards.length > 1 ? 'CARDS' : 'A CARD'}: ${list}.${opts.noted ? ` The owner's message was added to ${opts.noted}.` : ''} Anything more about that job goes onto that card — update it and re-dispatch if needed; never open another card for the same job.`
+      : '3. THIS CONVERSATION HAS NO CARD YET.',
+    `4. WORK → ONE CARD PER JOB. When the owner asks for work that needs doing and no card covers it, open exactly one with: ${newCard}`,
+    '   It prints the card\'s key and id. Then dispatch it as usual (4-part contract) and tell the owner in your reply what will happen, who does it and the key. A clearly separate job in the same conversation gets its own card; more words about the same job never do.',
+    `5. RESULTS: whoever finishes the card posts the real result back with: ${result} — then sets the card 'done' with a short 'result'. Pass that command on when you delegate.`,
+    '6. A decision that blocks a card: ask in your reply, or set the card blocked and append {q, askedAt} to its humanQA (the owner gets one-tap buttons for "1. …", "2. …" options).',
+    '7. Ask the owner before spending money, publishing anything, deleting files or installing software.',
+    '',
+    'The owner\'s message starts now:'
+  ].join('\n');
 }
 
 // ─── User-facing texts ──────────────────────────────────────────────────────
@@ -354,21 +440,23 @@ const STRINGS = {
     panelLink: (url) => `📱 Панель офиса (работает только при включённом Tailscale):\n${url}\n\nДобавь её на экран «Домой». Ссылку никому не пересылай.`,
     panelOff: 'Мобильная панель выключена. Включается в Settings → Connections → Mobile panel.',
     help: [
-      'Я связь с офисом.',
+      `Я связь с офисом. Пиши ${boss} как руководителю: вопросы, новости, поручения.`,
       '',
-      `• Просто напиши задачу — её получит ${boss} и раздаст агентам.`,
-      '• Можно приложить файл или фото с подписью.',
-      '• Когда офису нужен твой ответ, я пришлю вопрос. Ответь на него реплаем.',
-      '• Когда задача готова, пришлю результат.',
+      `• ${boss} ответит сам. Если нужна работа, на неё заводится одна карточка, и дальнейшие сообщения о ней дописываются туда же.`,
+      `• Ответь реплаем на сообщение ${boss}, чтобы продолжить тот же разговор. Сообщения подряд тоже идут в один разговор.`,
+      '• /new — начать новую тему. После 30 минут тишины новая тема начинается сама.',
+      '• Можно приложить файл, фото или голосовое.',
+      '• Когда офису нужен твой ответ, я пришлю вопрос с кнопками. Когда работа готова, пришлю результат.',
       '',
       '/status — кто из агентов чем занят',
       '/tasks — открытые задачи',
       '/asks — вопросы, которые ждут твоего ответа',
       '/limits — расход токенов за 5 часов, сутки, неделю и месяц',
-      '/panel — ссылка на мобильную панель офиса'
+      '/panel — ссылка на мобильную панель офиса',
+      '/new — новая тема разговора'
     ].join('\n'),
-    accepted: (taskId) => `Принято, передал ${boss}. Задача ${taskId}.`,
-    acceptedFollowUp: (taskId) => `Принято, передал ${boss} как продолжение задачи ${taskId}.`,
+    chatAck: `📨 Передал ${boss}.`,
+    newTopic: 'Хорошо, следующее сообщение начнёт новую тему.',
     answerSaved: (title) => `Ответ записан на карточку «${title}» и передан ${boss}.`,
     answerStale: 'Этот вопрос уже закрыт или изменился. /asks покажет актуальные.',
     ask: (title, q) => `❓ <b>Вопрос от офиса</b>\nЗадача: ${escapeHtml(title)}\n\n${mdToTelegramHtml(q)}\n\n<i>Ответь реплаем на это сообщение.</i>`,
@@ -408,21 +496,23 @@ const STRINGS = {
     panelLink: (url) => `📱 Office panel (works only with Tailscale on):\n${url}\n\nAdd it to your Home Screen. Do not forward this link.`,
     panelOff: 'The mobile panel is off. Turn it on in Settings → Connections → Mobile panel.',
     help: [
-      'I am your line to the office.',
+      `I am your line to the office. Write to ${boss} as you would to a CEO: questions, news, instructions.`,
       '',
-      `• Just write a task — ${boss} gets it and hands it to the agents.`,
-      '• You can attach a file or a photo with a caption.',
-      '• When the office needs your answer, I send the question. Reply to it.',
-      '• When a task is done, I send the result.',
+      `• ${boss} answers you directly. Work that needs doing gets one card, and later messages about it go onto that card.`,
+      `• Reply to a message from ${boss} to continue that conversation. Messages in a row also stay in one conversation.`,
+      '• /new starts a new topic. After 30 minutes of quiet a new topic starts by itself.',
+      '• You can attach a file, a photo or a voice note.',
+      '• When the office needs your answer, I send the question with buttons. When work is done, I send the result.',
       '',
       '/status — what each agent is doing',
       '/tasks — open tasks',
       '/asks — questions waiting for your answer',
       '/limits — token use over 5 hours, a day, a week and a month',
-      '/panel — link to the mobile office panel'
+      '/panel — link to the mobile office panel',
+      '/new — start a new topic'
     ].join('\n'),
-    accepted: (taskId) => `Got it, passed to ${boss}. Task ${taskId}.`,
-    acceptedFollowUp: (taskId) => `Got it, passed to ${boss} as a follow-up to task ${taskId}.`,
+    chatAck: `📨 Passed to ${boss}.`,
+    newTopic: 'OK, your next message starts a new topic.',
     answerSaved: (title) => `Answer saved on “${title}” and passed to ${boss}.`,
     answerStale: 'That question is already closed or has changed. /asks shows the current ones.',
     ask: (title, q) => `❓ <b>The office has a question</b>\nTask: ${escapeHtml(title)}\n\n${mdToTelegramHtml(q)}\n\n<i>Reply to this message to answer.</i>`,
@@ -654,5 +744,12 @@ module.exports = {
   fmtTokens,
   formatLimitAlert,
   formatLimits,
-  buildRequestProtocol
+  buildRequestProtocol,
+  CONVERSATION_IDLE_MS,
+  newConvId,
+  pickConversation,
+  conversationCards,
+  openCardOf,
+  appendOwnerNote,
+  buildChatProtocol
 };

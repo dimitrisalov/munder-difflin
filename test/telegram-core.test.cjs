@@ -202,23 +202,23 @@ test('the request protocol embeds the exact reply command and the card id', () =
 
 test('unknown language falls back to Russian', () => {
   assert.equal(core.strings('de').help, core.strings('ru').help);
-  assert.equal(core.strings('de').accepted('t'), core.strings('ru').accepted('t'));
+  assert.equal(core.strings('de').chatAck, core.strings('ru').chatAck);
 });
 
 test('the texts name the boss the owner knows, escaped, defaulting to the app default', () => {
-  assert.equal(core.strings('en', 'Theo').accepted('OFF-7'), 'Got it, passed to Theo. Task OFF-7.');
-  assert.equal(core.strings('ru', 'Theo').accepted('OFF-7'), 'Принято, передал Theo. Задача OFF-7.');
-  assert.match(core.strings('en', 'Theo').help, /Theo gets it/);
+  assert.equal(core.strings('en', 'Theo').chatAck, '📨 Passed to Theo.');
+  assert.equal(core.strings('ru', 'Theo').chatAck, '📨 Передал Theo.');
+  assert.match(core.strings('en', 'Theo').help, /Write to Theo as you would to a CEO/);
   assert.match(core.strings('ru', 'Theo').answerSaved('x'), /передан Theo\.$/);
-  assert.match(core.strings('en', 'Theo').acceptedFollowUp('t'), /passed to Theo as a follow-up/);
+  assert.match(core.strings('ru', 'Theo').help, /Пиши Theo как руководителю/);
   for (const lang of ['ru', 'en']) {
     const S = core.strings(lang, 'Theo');
     const all = Object.values(S).map((v) => (typeof v === 'function' ? v('x') : typeof v === 'string' ? v : '')).join('\n');
     assert.doesNotMatch(all, /Michael/, lang);
   }
-  assert.match(core.strings('en').accepted('t'), new RegExp(core.DEFAULT_BOSS));
-  assert.match(core.strings('en', '  ').accepted('t'), new RegExp(core.DEFAULT_BOSS));
-  assert.match(core.strings('en', 'A<b>').accepted('t'), /A&lt;b&gt;/);
+  assert.match(core.strings('en').chatAck, new RegExp(core.DEFAULT_BOSS));
+  assert.match(core.strings('en', '  ').chatAck, new RegExp(core.DEFAULT_BOSS));
+  assert.match(core.strings('en', 'A<b>').chatAck, /A&lt;b&gt;/);
 });
 
 test('detectLang: the language the owner wrote in', () => {
@@ -322,4 +322,55 @@ test('the request protocol tells agents about files and one-tap options', () => 
   const p = core.buildRequestProtocol({ nodeCommand: 'node', helperPath: 'h.cjs', messageId: 1, taskId: 't' });
   assert.match(p, /--file <absolute path>/);
   assert.match(p, /one tap buttons/);
+});
+
+// ─── conversations with the boss ────────────────────────────────────────────
+
+test('pickConversation: a reply continues, a recent message continues, a pause or /new starts anew', () => {
+  const MIN = 60_000;
+  const last = { id: 'conv-aaaa', at: 0 };
+  assert.deepEqual(core.pickConversation({ entry: { kind: 'chat', conv: 'conv-bbbb' }, last, now: 5 * 60 * MIN, newId: 'conv-new1' }), { conv: 'conv-bbbb', via: 'reply' });
+  // A reply to a card's message: that card's conversation, or a new one carrying the card.
+  assert.deepEqual(core.pickConversation({ entry: { kind: 'task', taskId: 't1' }, taskConv: 'conv-cccc', last, now: 0, newId: 'conv-new1' }), { conv: 'conv-cccc', via: 'reply' });
+  assert.deepEqual(core.pickConversation({ entry: { kind: 'task', taskId: 't1' }, last, now: 0, newId: 'conv-new1' }), { conv: 'conv-new1', via: 'card', card: 't1' });
+  assert.deepEqual(core.pickConversation({ last, now: 29 * MIN, newId: 'conv-new1' }), { conv: 'conv-aaaa', via: 'recent' });
+  assert.deepEqual(core.pickConversation({ last, now: 31 * MIN, newId: 'conv-new1' }), { conv: 'conv-new1', via: 'new' });
+  assert.deepEqual(core.pickConversation({ last: null, now: 0, newId: 'conv-new1' }), { conv: 'conv-new1', via: 'new' });
+  assert.match(core.newConvId(), /^conv-[0-9a-f]{8}$/);
+});
+
+test('a conversation\'s cards and the one a follow-up is written onto', () => {
+  const tasks = [
+    { id: 'a', title: 'Deck', status: 'done', createdAt: '2026-10-28T10:00:00Z', telegram: { chat_id: 1, message_id: 5, conv: 'conv-x' } },
+    { id: 'b', title: 'Logo', status: 'doing', createdAt: '2026-10-28T11:00:00Z', telegram: { chat_id: 1, message_id: 9, conv: 'conv-x' } },
+    { id: 'c', title: 'Other', status: 'todo', createdAt: '2026-10-28T09:00:00Z', telegram: { chat_id: 1, message_id: 2, conv: 'conv-y' } },
+    { id: 'old', title: 'Legacy', status: 'todo', createdAt: '2026-10-27T09:00:00Z', telegram: { chat_id: 1, message_id: 1 } },
+  ];
+  assert.deepEqual(core.conversationCards(tasks, 'conv-x').map((t) => t.id), ['a', 'b']);
+  assert.deepEqual(core.conversationCards(tasks, 'conv-new', ['old']).map((t) => t.id), ['old']);
+  assert.equal(core.openCardOf(core.conversationCards(tasks, 'conv-x')).id, 'b');
+  assert.equal(core.openCardOf([tasks[0]]), null);
+  assert.equal(core.appendOwnerNote('Brief.\n', 'make it blue', '28.10, 14:05'), 'Brief.\n\n— Owner, 28.10, 14:05 (Telegram): make it blue');
+  assert.equal(core.appendOwnerNote('', ' hi ', 't'), '— Owner, t (Telegram): hi');
+});
+
+test('the chat protocol: answer yourself, not every message is a task, one card per job', () => {
+  const base = { nodeCommand: 'node', helperPath: 'C:\\md\\md-telegram-reply.cjs', messageId: 42, conv: 'conv-ab12' };
+  const p = core.buildChatProtocol({ ...base, cards: [] });
+  assert.match(p, /ANSWER THEM YOURSELF/);
+  assert.match(p, /"node" "C:\\md\\md-telegram-reply\.cjs" --reply-to 42 --text/);
+  assert.match(p, /NOT EVERY MESSAGE IS A TASK/);
+  assert.match(p, /HAS NO CARD YET/);
+  assert.match(p, /--new-task "<short title>" --conv conv-ab12 --reply-to 42/);
+  assert.match(p, /--task <card id>/);
+  const q = core.buildChatProtocol({ ...base, cards: [{ id: 'telegram-1', key: 'OF-12', title: 'Deck', status: 'doing' }], noted: 'OF-12' });
+  assert.match(q, /ALREADY HAS A CARD: OF-12 \(telegram-1\) "Deck" — doing\. The owner's message was added to OF-12\./);
+  assert.match(q, /never open another card for the same job/);
+});
+
+test('the ledger keeps conversation entries across a restart', () => {
+  const l = new core.MessageLedger(10, [[5, { kind: 'chat', conv: 'conv-1' }], [6, { kind: 'task', taskId: 't' }], [7, { kind: 'chat' }]]);
+  assert.deepEqual(l.get(5), { kind: 'chat', conv: 'conv-1' });
+  assert.deepEqual(l.get(6), { kind: 'task', taskId: 't' });
+  assert.equal(l.get(7), undefined);
 });

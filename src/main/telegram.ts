@@ -170,6 +170,15 @@ export async function sendTelegramText(opts: {
   return { ok: true, messageIds };
 }
 
+/** Put an emoji reaction on a message (👀 = "got it, passed on"). False when
+ *  Telegram refuses it, so the caller can fall back to a short text. */
+export async function setReaction(token: string, chatId: number, messageId: number, emoji: string): Promise<boolean> {
+  const r = await callTelegram(token, 'setMessageReaction', {
+    chat_id: chatId, message_id: messageId, reaction: [{ type: 'emoji', emoji }]
+  });
+  return r.ok;
+}
+
 /** Acknowledge a button press (the small toast on the phone). Best-effort. */
 export async function answerCallback(token: string, callbackId: string, text?: string): Promise<void> {
   await callTelegram(token, 'answerCallbackQuery', { callback_query_id: callbackId, ...(text ? { text } : {}) });
@@ -398,16 +407,23 @@ export interface TelegramReplyServerOptions {
   getBotToken: () => string | undefined;
   /** Replies only ever go to the paired owner — an agent cannot pick a chat. */
   getOwnerChatId: () => number | undefined;
-  /** Fired after a reply threaded under `replyTo` was delivered, so the
-   *  done-notifier knows that request already got its answer. */
-  onReplied?: (replyTo: number | undefined) => void;
+  /** Fired after a reply threaded under `replyTo` was delivered, with the ids
+   *  of the messages it became and the card it is the result of (`--task`), so
+   *  the done-notifier knows the answer is in and a reply to it continues the
+   *  same conversation. */
+  onReplied?: (replyTo: number | undefined, sentIds: number[], task?: string) => void;
+  /** `--new-task`: open the one card for a job in a conversation. Returns its
+   *  id and ticket key, or why it could not. */
+  onNewTask?: (o: { title: string; description: string; conv: string; replyTo?: number }) => { ok: boolean; taskId?: string; key?: string; error?: string };
 }
 
 /**
  * Loopback-only HTTP endpoint for the bundled `md-telegram-reply.cjs` helper.
  * Binds to 127.0.0.1, checks the per-session token in constant time, refuses
- * non-loopback peers, and forwards `{ text?, file?, reply_to? }` to the owner's chat as
- * light markdown rendered to Telegram HTML.
+ * non-loopback peers, and forwards `{ text?, file?, reply_to?, task? }` (POST
+ * /reply) to the owner's chat as light markdown rendered to Telegram HTML.
+ * POST /task `{ title, description?, conv, reply_to? }` opens a conversation's
+ * card instead (onNewTask).
  */
 export class TelegramReplyServer {
   private server: Server | null = null;
@@ -441,7 +457,8 @@ export class TelegramReplyServer {
 
   private handle(req: IncomingMessage, res: ServerResponse): void {
     if (!isLoopback(req.socket.remoteAddress ?? '')) { res.writeHead(403); res.end(); return; }
-    if (req.method !== 'POST' || (req.url ?? '').split('?')[0] !== '/reply') { res.writeHead(404); res.end(); return; }
+    const route = (req.url ?? '').split('?')[0];
+    if (req.method !== 'POST' || (route !== '/reply' && route !== '/task')) { res.writeHead(404); res.end(); return; }
     if (!this.checkToken(req.headers['x-md-reply-token'])) { res.writeHead(401); res.end(); return; }
 
     const chunks: Buffer[] = [];
@@ -459,9 +476,21 @@ export class TelegramReplyServer {
         res.writeHead(status, { 'content-type': 'application/json' });
         res.end(JSON.stringify(payload));
       };
-      let parsed: { text?: unknown; reply_to?: unknown; file?: unknown };
+      let parsed: { text?: unknown; reply_to?: unknown; file?: unknown; task?: unknown; title?: unknown; description?: unknown; conv?: unknown };
       try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
       catch { send(400, { ok: false, error: 'bad json' }); return; }
+      if (route === '/task') {
+        const title = typeof parsed.title === 'string' ? parsed.title.trim() : '';
+        const conv = typeof parsed.conv === 'string' ? parsed.conv.trim() : '';
+        if (!title || !/^conv-[a-z0-9]{4,32}$/.test(conv)) { send(400, { ok: false, error: 'title and a conversation id (--conv conv-…) required' }); return; }
+        if (!this.opts.onNewTask) { send(503, { ok: false, error: 'cards cannot be opened here' }); return; }
+        const replyToTask = typeof parsed.reply_to === 'number' && Number.isInteger(parsed.reply_to) ? parsed.reply_to : undefined;
+        let r: { ok: boolean; taskId?: string; key?: string; error?: string };
+        try { r = this.opts.onNewTask({ title, description: typeof parsed.description === 'string' ? parsed.description : '', conv, replyTo: replyToTask }); }
+        catch (e) { r = { ok: false, error: errMsg(e) }; }
+        send(r.ok ? 200 : 500, r);
+        return;
+      }
       const botToken = this.opts.getBotToken();
       const chatId = this.opts.getOwnerChatId();
       if (!botToken) { send(503, { ok: false, error: 'no bot token' }); return; }
@@ -471,12 +500,15 @@ export class TelegramReplyServer {
       if (!text && !file) { send(400, { ok: false, error: 'text or file required' }); return; }
       const replyTo = typeof parsed.reply_to === 'number' && Number.isInteger(parsed.reply_to) ? parsed.reply_to : undefined;
       // A file goes out with the text as its caption; plain text as a message.
-      const delivery: Promise<{ ok: boolean; error?: string }> = file
+      const task = typeof parsed.task === 'string' && parsed.task.trim() ? parsed.task.trim() : undefined;
+      const delivery: Promise<{ ok: boolean; error?: string; ids: number[] }> = file
         ? sendTelegramFile({ token: botToken, chatId, path: file, captionHtml: text ? core.mdToTelegramHtml(text) : undefined, replyTo })
-        : sendTelegramText({ token: botToken, chatId, text: core.mdToTelegramHtml(text), html: true, replyTo });
+          .then((r) => ({ ...r, ids: r.messageId ? [r.messageId] : [] }))
+        : sendTelegramText({ token: botToken, chatId, text: core.mdToTelegramHtml(text), html: true, replyTo })
+          .then((r) => ({ ...r, ids: r.messageIds }));
       delivery
         .then((r) => {
-          if (r.ok) { try { this.opts.onReplied?.(replyTo); } catch { /* never break the reply */ } }
+          if (r.ok) { try { this.opts.onReplied?.(replyTo, r.ids, task); } catch { /* never break the reply */ } }
           send(r.ok ? 200 : 502, r.ok ? { ok: true } : { ok: false, error: r.error });
         })
         .catch((e) => send(500, { ok: false, error: errMsg(e) }));

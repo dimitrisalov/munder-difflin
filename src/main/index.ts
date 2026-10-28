@@ -37,7 +37,7 @@ import { readAgentUsage, readContextTokens, seedSessionTranscript, resolveSessio
 import { listIssues, listCIRuns } from './github';
 import { SlackWebhookServer, SlackReplyServer, postSlackReply, type SlackEventFile } from './slack';
 import {
-  TelegramBot, TelegramReplyServer, sendTelegramText, downloadTelegramFile, answerCallback, editReplyMarkup,
+  TelegramBot, TelegramReplyServer, sendTelegramText, downloadTelegramFile, answerCallback, editReplyMarkup, setReaction,
   type TelegramDecision
 } from './telegram';
 import { transcribeVoice, resolveEngine, validLocalUrl, type VoiceSettings, type TranscribeEngine } from './transcribe';
@@ -1945,7 +1945,10 @@ function stopSlackServer(): void {
 // sqlite kv, so a failed native DB build cannot silently drop the pairing.
 
 interface TelegramAsk { taskId: string; title: string; q: string; askedAt?: string }
-interface TelegramLedgerEntry { kind: 'ask' | 'task'; taskId: string; q?: string }
+type TelegramLedgerEntry =
+  | { kind: 'ask'; taskId: string; q?: string }
+  | { kind: 'task'; taskId: string }
+  | { kind: 'chat'; conv: string };
 interface TelegramLedger {
   set(messageId: number, entry: TelegramLedgerEntry): void;
   get(messageId: number): TelegramLedgerEntry | undefined;
@@ -1961,8 +1964,8 @@ interface TelegramStrings {
   voiceOff: string;
   voiceFailed: (e: string) => string;
   help: string;
-  accepted: (taskId: string) => string;
-  acceptedFollowUp: (taskId: string) => string;
+  chatAck: string;
+  newTopic: string;
   answerSaved: (title: string) => string;
   answerStale: string;
   noAsks: string;
@@ -1984,6 +1987,13 @@ const tgCore = require('./telegram-core.cjs') as {
   formatStatus: (registry: unknown, tasks: unknown, lang: string) => string;
   formatTasks: (tasks: unknown, lang: string) => string;
   buildRequestProtocol: (o: { nodeCommand: string; helperPath: string; messageId: number; taskId: string; source?: 'telegram' | 'panel' }) => string;
+  newConvId: () => string;
+  pickConversation: (o: { entry?: TelegramLedgerEntry; taskConv?: string; last: { id: string; at: number } | null; now: number; newId: string }) =>
+    { conv: string; via: 'reply' | 'card' | 'recent' | 'new'; card?: string };
+  conversationCards: (tasks: HiveTask[], conv: string, extraIds?: string[]) => HiveTask[];
+  openCardOf: (cards: HiveTask[]) => HiveTask | null;
+  appendOwnerNote: (description: string | undefined, text: string, stamp: string) => string;
+  buildChatProtocol: (o: { nodeCommand: string; helperPath: string; messageId: number; conv: string; cards: Array<{ id: string; key?: string; title: string; status: string }>; noted?: string }) => string;
   escapeHtml: (s: string) => string;
   truncate: (s: string, n: number) => string;
   formatLimitAlert: (item: LimitItem & { name?: string }, level: 'warn' | 'over', lang: string) => string;
@@ -2022,6 +2032,10 @@ interface TelegramRuntime {
   doneNotified?: string[];
   /** askShortKey → the ask its buttons answer. Bounded, oldest dropped. */
   askButtons?: Record<string, TelegramAskButtons>;
+  /** Conversations with the boss (telegram-core pickConversation): the latest
+   *  one and when it last moved, and which conversation each owner message
+   *  belongs to (bounded), so the boss's answer to it continues the same one. */
+  chat?: { last?: { id: string; at: number }; msgConv?: Record<string, string> };
 }
 
 interface TelegramStatus {
@@ -2053,6 +2067,10 @@ let telegramDoneBaseline: Set<string> | null = null;
 /** Request messages an agent already answered directly through the helper, so
  *  the done-summary is a fallback, not a duplicate. */
 const telegramDirectlyReplied = new Set<number>();
+/** Conversation cards whose result an agent already posted (helper --task). */
+const telegramResultPosted = new Set<string>();
+/** Owner messages remembered per conversation: enough for a day's chat. */
+const TELEGRAM_MSG_CONV_MAX = 300;
 
 function telegramSettingsPath(): string { return join(app.getPath('userData'), 'telegram.json'); }
 function telegramRuntimePath(): string { return join(app.getPath('userData'), 'telegram-runtime.json'); }
@@ -2317,17 +2335,14 @@ async function handleTelegramDecision(d: Exclude<TelegramDecision, { kind: 'igno
     }
   }
 
-  // A reply to one of our messages: an answer to a question, or a follow-up.
-  let followUpOf: string | undefined;
-  if (d.replyTo !== null) {
-    const entry = telegramLedger().get(d.replyTo);
-    if (entry?.kind === 'ask' && entry.q !== undefined && d.text) {
-      await answerTelegramAsk(entry.taskId, entry.q, d.text, d.messageId, lang);
-      return;
-    }
-    if (entry?.kind === 'task') followUpOf = entry.taskId;
+  // A reply to a forwarded question is the answer to it; anything else is
+  // part of a conversation with the boss.
+  const entry = d.replyTo !== null ? telegramLedger().get(d.replyTo) : undefined;
+  if (entry?.kind === 'ask' && entry.q !== undefined && d.text) {
+    await answerTelegramAsk(entry.taskId, entry.q, d.text, d.messageId, lang);
+    return;
   }
-  await dispatchTelegramWork(d, followUpOf, lang);
+  await dispatchTelegramChat(d, entry, lang);
 }
 
 async function handleTelegramCommand(cmd: string, messageId: number, lang: string): Promise<void> {
@@ -2357,6 +2372,13 @@ async function handleTelegramCommand(cmd: string, messageId: number, lang: strin
       await telegramSendToOwner(tgCore.formatLimits({ config: readConfig().periodLimits, usage: periodTracker.snapshot(), names }, lang), messageId);
       return;
     }
+    case 'new': {
+      // The next message starts a new conversation (a new topic for the boss).
+      const chat = telegramRuntime().chat ?? {};
+      writeTelegramRuntime({ chat: { ...chat, last: undefined } });
+      await telegramSendToOwner(S.newTopic, messageId);
+      return;
+    }
     case 'asks': {
       // Re-send every open question, even ones already delivered once.
       const asks = tgCore.openAsks(withTicketTitles(hiveTaskList()));
@@ -2369,15 +2391,30 @@ async function handleTelegramCommand(cmd: string, messageId: number, lang: strin
   }
 }
 
-/** A new request from the owner → kanban card + a request to god, then an ack. */
-async function dispatchTelegramWork(
+/** Remember which conversation a message belongs to (owner's and ours). */
+function rememberTelegramConversation(conv: string, ownerMessageId?: number, ourIds: number[] = []): void {
+  const chat = telegramRuntime().chat ?? {};
+  const msgConv = { ...(chat.msgConv ?? {}) };
+  if (ownerMessageId !== undefined) msgConv[String(ownerMessageId)] = conv;
+  const keys = Object.keys(msgConv);
+  for (const k of keys.slice(0, Math.max(0, keys.length - TELEGRAM_MSG_CONV_MAX))) delete msgConv[k];
+  writeTelegramRuntime({ chat: { ...chat, last: { id: conv, at: Date.now() }, msgConv } });
+  const ledger = telegramLedger();
+  for (const id of [...(ownerMessageId !== undefined ? [ownerMessageId] : []), ...ourIds]) ledger.set(id, { kind: 'chat', conv });
+  writeTelegramRuntime({ ledger: ledger.toJSON() });
+}
+
+/** One owner message → the boss, as part of a conversation. No card here: the
+ *  boss answers and opens one card per job himself (helper --new-task); a
+ *  message about a job that already has a card is written onto that card. The
+ *  owner sees 👀 on the message as the receipt. */
+async function dispatchTelegramChat(
   d: Extract<TelegramDecision, { kind: 'message' }>,
-  followUpOf: string | undefined,
+  entry: TelegramLedgerEntry | undefined,
   lang: string
 ): Promise<void> {
   const S = telegramStrings(lang);
   const token = telegramSettings().botToken;
-  const taskId = `telegram-${randomBytes(6).toString('hex')}`;
 
   const paths: string[] = [];
   let failed = 0;
@@ -2387,48 +2424,76 @@ async function dispatchTelegramWork(
       if (r.ok && r.path) paths.push(r.path); else failed++;
     }
   }
-
   const text = d.text || '(attachment without a caption)';
-  const firstLine = text.split('\n')[0] ?? text;
-  const title = tgCore.truncate(firstLine, 80);
   const attachments = paths.length > 0 ? `\n\nAttachments (local files):\n${paths.map((p) => `- ${p}`).join('\n')}` : '';
-  try {
-    hive.addTask({
-      id: taskId,
-      title,
-      description: text + attachments,
-      status: 'todo',
-      dependsOn: [],
-      priority: 1,
-      createdAt: new Date().toISOString(),
-      telegram: { chat_id: d.chatId, message_id: d.messageId }
-    });
-  } catch (e) {
-    console.error('[telegram] could not create task card:', e instanceof Error ? e.message : e);
-    await telegramSendToOwner(S.hiveOff, d.messageId);
-    return;
+
+  const tasks = hiveTaskList();
+  const entryTask = entry && entry.kind !== 'chat' ? tasks.find((t) => t.id === entry.taskId) : undefined;
+  const pick = tgCore.pickConversation({
+    entry, taskConv: entryTask?.telegram?.conv, last: telegramRuntime().chat?.last ?? null, now: Date.now(), newId: tgCore.newConvId()
+  });
+  const cards = tgCore.conversationCards(tasks, pick.conv, pick.card ? [pick.card] : []);
+  const keys = ticketBook.keys(tasks);
+
+  // More words about a job that already has a card go onto that card.
+  let noted: string | undefined;
+  const open = tgCore.openCardOf(cards);
+  if (open) {
+    const stamp = new Date().toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    if (hive.patchTask(open.id, { description: tgCore.appendOwnerNote(open.description, text + attachments, stamp) })) noted = keys[open.id] ?? open.id;
   }
 
-  const protocol = tgCore.buildRequestProtocol({
-    nodeCommand: hive.nodeCommand(), helperPath: telegramReplyScriptPath(), messageId: d.messageId, taskId
+  const protocol = tgCore.buildChatProtocol({
+    nodeCommand: hive.nodeCommand(), helperPath: telegramReplyScriptPath(), messageId: d.messageId, conv: pick.conv,
+    cards: cards.map((c) => ({ id: c.id, key: keys[c.id], title: c.title, status: c.status })), noted
   });
-  const followUp = followUpOf ? `\n\n(This is a follow-up to card ${followUpOf}; read it first.)` : '';
+  const firstLine = text.split('\n')[0] ?? text;
   try {
     hive.send({
       to: 'god',
       act: 'request',
-      subject: `[telegram] ${title}`,
-      body: `${protocol}\n${text}${attachments}${followUp}${ticketFootnoteFor(text)}`,
+      subject: `[telegram chat] ${tgCore.truncate(firstLine, 80)}`,
+      body: `${protocol}\n${text}${attachments}${ticketFootnoteFor(text)}`,
       requires_reply: false
     }, 'telegram');
   } catch (e) {
     console.error('[telegram] could not route to god:', e instanceof Error ? e.message : e);
+    await telegramSendToOwner(S.hiveOff, d.messageId);
+    return;
   }
 
-  const ticket = ticketBook.keys(hiveTaskList())[taskId];
-  const ids = await telegramSendToOwner(followUpOf ? S.acceptedFollowUp(followUpOf) : S.accepted(ticket ?? taskId), d.messageId);
-  rememberTelegramMessages(ids, { kind: 'task', taskId });
+  // The receipt: 👀 on the message; a short line only if reactions are refused.
+  const reacted = token ? await setReaction(token, d.chatId, d.messageId, '👀') : false;
+  const ackIds = reacted ? [] : await telegramSendToOwner(S.chatAck, d.messageId);
+  rememberTelegramConversation(pick.conv, d.messageId, ackIds);
   if (failed > 0) await telegramSendToOwner(S.filesFailed(failed), d.messageId);
+}
+
+/** helper --new-task: open the one card for a job the owner asked for in a
+ *  conversation, linked to it so its questions and result reach the owner. */
+function openTelegramConversationCard(o: { title: string; description: string; conv: string; replyTo?: number }): { ok: boolean; taskId?: string; key?: string; error?: string } {
+  if (!hive.enabled()) return { ok: false, error: 'the office is not running' };
+  const chatId = telegramSettings().ownerChatId;
+  if (chatId === undefined) return { ok: false, error: 'the bot is not paired yet' };
+  const taskId = `telegram-${randomBytes(6).toString('hex')}`;
+  const title = tgCore.truncate(o.title.replace(/\s+/g, ' ').trim(), 80);
+  try {
+    hive.addTask({
+      id: taskId,
+      title,
+      description: o.description.trim(),
+      status: 'todo',
+      dependsOn: [],
+      priority: 1,
+      createdAt: new Date().toISOString(),
+      telegram: { chat_id: chatId, message_id: o.replyTo ?? 0, conv: o.conv }
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+  const key = ticketBook.keys(hiveTaskList())[taskId];
+  integrationEvents.push('telegram', `card opened in a conversation: ${key ?? taskId} ${title}`);
+  return { ok: true, taskId, key };
 }
 
 /** Answer the open question on a card: the same two steps as the ASK ME tab —
@@ -2497,7 +2562,12 @@ async function pollTelegramOutbound(): Promise<void> {
     for (const t of tasks) {
       if (t.status !== 'done' || !t.telegram || telegramDoneBaseline.has(t.id) || doneNotified.has(t.id)) continue;
       if (taskFlowCore.isAwaitingReview(t)) continue; // not done until its reviewer approves (wave 6)
-      const answeredDirectly = telegramDirectlyReplied.has(t.telegram.message_id);
+      // A conversation's card: the result counts as posted only when an agent
+      // sent it with --task (the boss's chat replies to the same message are
+      // not the result). Older cards: any direct reply to the request.
+      const answeredDirectly = t.telegram.conv
+        ? telegramResultPosted.has(t.id)
+        : telegramDirectlyReplied.has(t.telegram.message_id);
       const hasBody = !!(t.result ?? t.description ?? '').trim();
       if (!answeredDirectly && hasBody) {
         const ids = await telegramSendToOwner(tgCore.formatDone(t, lang), t.telegram.message_id);
@@ -2523,7 +2593,17 @@ async function startTelegramReplyServer(): Promise<void> {
     token,
     getBotToken: () => telegramSettings().botToken,
     getOwnerChatId: () => telegramSettings().ownerChatId,
-    onReplied: (replyTo) => { if (replyTo !== undefined) telegramDirectlyReplied.add(replyTo); }
+    onReplied: (replyTo, sentIds, task) => {
+      if (replyTo !== undefined) telegramDirectlyReplied.add(replyTo);
+      if (task) telegramResultPosted.add(task);
+      // An answer to a message of a conversation is part of it: a reply to the
+      // answer continues the same conversation.
+      if (replyTo === undefined) return;
+      const asked = telegramLedger().get(replyTo);
+      const conv = telegramRuntime().chat?.msgConv?.[String(replyTo)] ?? (asked?.kind === 'chat' ? asked.conv : undefined);
+      if (conv) rememberTelegramConversation(conv, undefined, sentIds);
+    },
+    onNewTask: openTelegramConversationCard
   });
   const r = await telegramReplyServer.start();
   if (!r.ok || r.port === undefined) {

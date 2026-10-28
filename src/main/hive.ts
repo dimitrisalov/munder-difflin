@@ -138,7 +138,7 @@ export interface HiveTask {
   slack?: { channel: string; thread_ts: string };
   /** Set when this task originated from the owner's Telegram — the message the
    *  done-summary replies to. Consumed OUTBOUND only, like `slack`. */
-  telegram?: { chat_id: number; message_id: number };
+  telegram?: { chat_id: number; message_id: number; conv?: string };
   /** Agent id that must approve this card's result before the owner hears it
    *  is done (wave 6; see taskFlow-core.cjs). Unset = no review step. */
   reviewer?: string;
