@@ -113,10 +113,15 @@ export function isTurnHook(event: string | undefined): boolean {
 
 /** One worker's live facts, gathered by the caller each beat. */
 export interface WorkerWakeFacts {
-  /** Worker agent id (god is never a candidate). */
+  /** Agent id (god only with `godMail`). */
   agentId: string;
-  /** True when this agent is the orchestrator — god is never nudged. */
+  /** True when this agent is the orchestrator. God is nudged only for mail a
+   *  person or another agent sent (`godMail`): the scheduler's own beats wait
+   *  for the heartbeat path. */
   isGod?: boolean;
+  /** For god: `inboxIds` holds real mail (the owner from Telegram or the
+   *  panel, an agent's reply) and god may be woken for it like a worker. */
+  godMail?: boolean;
   /** Live PTY id, or undefined when the agent has no terminal. */
   ptyId?: string;
   /** Timestamp of the PTY's last output (0 = never output). */
@@ -254,7 +259,7 @@ export class WorkerWakeWatchdog {
   explain(f: WorkerWakeFacts, now = Date.now()): WorkerWakeHold | null {
     const inboxIds = liveInboxIds(f);
     if (inboxIds.size === 0) return 'no-mail';
-    if (f.isGod) return 'god';
+    if (f.isGod && !f.godMail) return 'god';
     if (!f.ptyId) return 'no-pty';
     if (f.autoDeliveryPaused) return 'delivery-paused';
     if (f.paused) return 'paused';

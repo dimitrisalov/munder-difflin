@@ -6887,8 +6887,10 @@ function nudgeWorker(ptyId: string, ids: string[] = []): void {
  *  it gathers live-worker facts (PTY quiescence, inbox depth, control flags) and
  *  lets WorkerWakeWatchdog.decide apply the exact renderer guards (idle-only,
  *  post-boot-grace, not paused/halted, no pending HITL, cooldown), then types the
- *  same nudge the renderer would have. God is never a candidate (its heartbeat
- *  path already re-engages it). */
+ *  same nudge the renderer would have. God is a candidate only for real mail
+ *  (the owner, an agent): the heartbeat only drops its digest into his inbox
+ *  and is off by default, so without this nothing outside the renderer woke
+ *  him for the owner's Telegram messages (28.10). */
 function runWorkerWakeBeat(): void {
   if (!hive.enabled()) return;
   const reg = hive.registry();
@@ -6896,11 +6898,16 @@ function runWorkerWakeBeat(): void {
   const now = Date.now();
   const facts: WorkerWakeFacts[] = [];
   for (const [agentId, a] of Object.entries(reg.agents)) {
-    if (agentId === reg.godId || a?.archived) continue;
+    if (a?.archived) continue;
     const ptyId = ptyForAgent(agentId);
     if (!ptyId) continue;
     const snap = control.snapshot(agentId);
-    const mail = hive.inbox(agentId);
+    // God too, for real mail only: the renderer's nudge was the one path that
+    // woke him for it, and with the window throttled or off-screen the owner's
+    // Telegram messages sat unread for hours (28.10). Scheduler beats are left
+    // to the heartbeat.
+    const isGod = agentId === reg.godId;
+    const mail = isGod ? hive.inbox(agentId).filter((m) => !SYSTEM_SENDERS.has(m.from)) : hive.inbox(agentId);
     // Oldest pending message: the stall rule measures how long the worker has
     // ignored its mail, and telemetry says whether it has done ANY turn since.
     let oldestMailAt = 0;
@@ -6913,7 +6920,8 @@ function runWorkerWakeBeat(): void {
     const usage = telemetry.getAgentUsage(agentId);
     facts.push({
       agentId,
-      isGod: agentId === reg.godId,
+      isGod,
+      godMail: isGod && mail.length > 0,
       ptyId,
       lastOutputAt: ptyManager.lastOutputAt(ptyId) ?? 0,
       inboxIds: mail.map((message) => message.id).filter(Boolean),
@@ -6937,7 +6945,7 @@ function runWorkerWakeBeat(): void {
     // Re-read at delivery time, not from the facts snapshot: the agent may have
     // drained the mail during the beat, and a nudge naming ids it already filed
     // is the exact staleness #187 exists to stop.
-    const ids = hive.inbox(agentId).map((m) => m.id).filter(Boolean);
+    const ids = hive.inbox(agentId).filter((m) => agentId !== reg.godId || !SYSTEM_SENDERS.has(m.from)).map((m) => m.id).filter(Boolean);
     if (!ids.length) { console.log(`[worker-wake] ${agentId} drained before delivery, skipping`); continue; }
     console.log(`[worker-wake] nudging ${agentId} on ${ptyId} (${ids.length} pending)`);
     nudgeWorker(ptyId, ids);

@@ -34,6 +34,19 @@ test('nudges an idle worker with undrained inbox mail', () => {
   assert.deepEqual(out, ['alice']);
 });
 
+test('wakes god for real mail (the owner from Telegram, an agent), never for scheduler beats', () => {
+  const w = new WorkerWakeWatchdog();
+  w.noteSpawn('p-god', 0);
+  const now = 200_000;
+  const idle = now - WORKER_WAKE_IDLE_MS - 1;
+  assert.deepEqual(w.decide([fact({ agentId: 'god', isGod: true, ptyId: 'p-god', lastOutputAt: idle })], now), [], 'beats only');
+  assert.equal(w.explain(fact({ agentId: 'god', isGod: true, ptyId: 'p-god', lastOutputAt: idle }), now), 'god');
+  assert.deepEqual(w.decide([fact({ agentId: 'god', isGod: true, godMail: true, ptyId: 'p-god', lastOutputAt: idle })], now), ['god']);
+  // Same guards as a worker: never mid-turn.
+  const w2 = new WorkerWakeWatchdog();
+  assert.deepEqual(w2.decide([fact({ agentId: 'god', isGod: true, godMail: true, ptyId: 'p-god', lastOutputAt: now - 1000 })], now), []);
+});
+
 test('never nudges god, archived agents, or agents without a live pty', () => {
   const w = new WorkerWakeWatchdog();
   w.noteSpawn('p1', 0);
