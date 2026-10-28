@@ -323,7 +323,7 @@ function standingGoalFromRoster(agentId: string): string | null {
 // terminal still drawing the tool's spinner) gets Esc, an inbox note on how to
 // go on, and the boss is told; if that does not bring it back, the owner hears
 // about it in Telegram. Decisions: hang-guard-core.cjs; the beat: runHangGuardBeat.
-interface HangAction { agentId: string; name: string; kind: 'interrupt' | 'escalate'; tool: string; detail: string; minutes: number }
+interface HangAction { agentId: string; name: string; kind: 'watch' | 'interrupt' | 'escalate'; tool: string; detail: string; minutes: number; after: string; terminalAgoS: number }
 interface HangGuardCore {
   HangGuard: new () => {
     note: (agentId: string | undefined, event: string, info: { message?: string; toolName?: string; toolInput?: unknown }) => { interruptedAt: number } | null;
@@ -6936,21 +6936,27 @@ function runHangGuardBeat(): void {
     // before it goes into a message, a log line or Telegram.
     const o: HangAction = { ...act, detail: officeLogCore.maskSecrets(act.detail) };
     const ptyId = ptyForAgent(o.agentId);
+    const what = o.tool ? `${o.tool} open (${o.detail})` : 'a turn with nothing open';
+    if (o.kind === 'watch') {
+      // Half way to the limit: say what the guard sees, so a miss can be explained.
+      console.log(`[hang-guard] ${o.name}: no hook for ${o.minutes} min, ${what}, last: ${o.after || '—'}, terminal drew ${o.terminalAgoS < 0 ? 'never' : `${o.terminalAgoS}s ago`}`);
+      continue;
+    }
     if (o.kind === 'interrupt') {
-      console.warn(`[hang-guard] ${o.name}: ${o.tool} silent for ${o.minutes} min — pressing Esc (${o.detail})`);
+      console.warn(`[hang-guard] ${o.name}: no hook for ${o.minutes} min, ${what}, last: ${o.after || '—'} — pressing Esc`);
       if (ptyId) {
         const w = ptyManager.write(ptyId, '\x1b');
         if (!w.ok) console.warn(`[hang-guard] Esc failed for ${ptyId}: ${w.error}`);
       }
       try {
-        hive.send({ to: o.agentId, act: 'inform', subject: `HANG GUARD: your ${o.tool} call was interrupted`, body: hangCore.agentNotice(o), requires_reply: false });
+        hive.send({ to: o.agentId, act: 'inform', subject: `HANG GUARD: your ${o.tool ? `${o.tool} call` : 'turn'} was interrupted`, body: hangCore.agentNotice(o), requires_reply: false });
         if (reg.godId && o.agentId !== reg.godId) {
-          hive.send({ to: reg.godId, act: 'inform', subject: `HANG GUARD: ${o.name}'s ${o.tool} call was interrupted`, body: hangCore.bossNotice(o), requires_reply: false });
+          hive.send({ to: reg.godId, act: 'inform', subject: `HANG GUARD: ${o.name}'s ${o.tool ? `${o.tool} call` : 'turn'} was interrupted`, body: hangCore.bossNotice(o), requires_reply: false });
         }
       } catch (e) { console.error('[hang-guard] could not send the notes:', e instanceof Error ? e.message : e); }
-      breakerToast('Command hung', `${o.name}: ${o.tool} ran ${o.minutes} min without returning and was interrupted.`);
+      breakerToast('Agent hung', `${o.name}: no progress for ${o.minutes} min${o.tool ? ` inside ${o.tool}` : ''}; interrupted.`);
     } else {
-      console.error(`[hang-guard] ${o.name} still silent ${o.minutes} min into a hung ${o.tool} call; telling the owner`);
+      console.error(`[hang-guard] ${o.name} still silent ${o.minutes} min after the interrupt (${what}); telling the owner`);
       void telegramSendToOwner(hangCore.formatHang(o, telegramSettings().lang ?? 'ru')).catch(() => { /* best-effort */ });
       breakerToast('Agent stuck', `${o.name} is still stuck after Esc. Restart it from its card.`);
     }
