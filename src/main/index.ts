@@ -319,6 +319,25 @@ function standingGoalFromRoster(agentId: string): string | null {
   }
   return null;
 }
+// Hang guard: an agent stuck inside one tool call (no hook for many minutes, its
+// terminal still drawing the tool's spinner) gets Esc, an inbox note on how to
+// go on, and the boss is told; if that does not bring it back, the owner hears
+// about it in Telegram. Decisions: hang-guard-core.cjs; the beat: runHangGuardBeat.
+interface HangAction { agentId: string; name: string; kind: 'interrupt' | 'escalate'; tool: string; detail: string; minutes: number }
+interface HangGuardCore {
+  HangGuard: new () => {
+    note: (agentId: string | undefined, event: string, info: { message?: string; toolName?: string; toolInput?: unknown }) => { interruptedAt: number } | null;
+    check: (facts: Array<{ agentId: string; name?: string; lastOutputAt: number; skip?: boolean }>, now: number, minutes: number) => HangAction[];
+    forget: (agentId: string) => void;
+  };
+  hangMinutes: (raw: unknown) => number;
+  agentNotice: (o: HangAction) => string;
+  bossNotice: (o: HangAction) => string;
+  formatHang: (o: HangAction, lang: string) => string;
+}
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const hangCore = require('./hang-guard-core.cjs') as HangGuardCore;
+const hangGuard = new hangCore.HangGuard();
 // Worker inbox-wake watchdog (#151): finds idle workers with undrained inbox mail
 // and types the same guarded nudge the renderer would have (so a throttled
 // background window can't leave a worker parked on an unread inbox forever).
@@ -333,7 +352,11 @@ const hookServer = new HookServer(
   control,
   breaker,
   standingGoalFromRoster,
-  (agentId, event, message) => workerWake.noteHook(agentId, event, message)
+  (agentId, event, message, toolName, toolInput) => {
+    workerWake.noteHook(agentId, event, message);
+    const ended = hangGuard.note(agentId, event, { message, toolName, toolInput });
+    if (ended && agentId) console.log(`[hang-guard] ${agentId} is taking turns again after the interrupt`);
+  }
 );
 const memory = new MemoryManager(
   () => readConfig().harnessHome,
@@ -483,6 +506,7 @@ function teardownPty(id: string): void {
     ptyToAgent.delete(id);
     // Drop watchdog state so a dead agent can't get nudged or leak its grace.
     try { workerWake.forget(agentId, id); } catch { /* best-effort */ }
+    try { hangGuard.forget(agentId); } catch { /* best-effort */ }
     // Drop breaker state so a dead agent can't leak/zombie a tripped level.
     try { breaker.forget(agentId); } catch { /* best-effort */ }
     // A replacement using this id needs a new usage counter, not the dead PTY's.
@@ -6807,6 +6831,52 @@ function runWorkerWakeBeat(): void {
   }
 }
 
+/** How often the hang guard looks for an agent stuck inside one tool call. */
+const HANG_GUARD_POLL_MS = 30_000;
+let hangGuardTimer: ReturnType<typeof setInterval> | null = null;
+
+/** The hang guard's beat: Esc into a hung agent's terminal and tell it (and the
+ *  boss) what happened; tell the owner when that did not help. */
+function runHangGuardBeat(): void {
+  if (!hive.enabled()) return;
+  const minutes = hangCore.hangMinutes(readConfig().watchdog);
+  if (minutes <= 0) return;
+  const reg = hive.registry();
+  if (!reg?.agents) return;
+  const facts: Array<{ agentId: string; name: string; lastOutputAt: number; skip: boolean }> = [];
+  for (const [agentId, a] of Object.entries(reg.agents)) {
+    if (a?.archived) continue;
+    const ptyId = ptyForAgent(agentId);
+    if (!ptyId) continue;
+    const snap = control.snapshot(agentId);
+    facts.push({ agentId, name: a?.name ?? agentId, lastOutputAt: ptyManager.lastOutputAt(ptyId) ?? 0, skip: snap.paused || snap.halted });
+  }
+  for (const act of hangGuard.check(facts, Date.now(), minutes)) {
+    // The command line can carry a token (curl -H "Authorization: …"): mask it
+    // before it goes into a message, a log line or Telegram.
+    const o: HangAction = { ...act, detail: officeLogCore.maskSecrets(act.detail) };
+    const ptyId = ptyForAgent(o.agentId);
+    if (o.kind === 'interrupt') {
+      console.warn(`[hang-guard] ${o.name}: ${o.tool} silent for ${o.minutes} min — pressing Esc (${o.detail})`);
+      if (ptyId) {
+        const w = ptyManager.write(ptyId, '\x1b');
+        if (!w.ok) console.warn(`[hang-guard] Esc failed for ${ptyId}: ${w.error}`);
+      }
+      try {
+        hive.send({ to: o.agentId, act: 'inform', subject: `HANG GUARD: your ${o.tool} call was interrupted`, body: hangCore.agentNotice(o), requires_reply: false });
+        if (reg.godId && o.agentId !== reg.godId) {
+          hive.send({ to: reg.godId, act: 'inform', subject: `HANG GUARD: ${o.name}'s ${o.tool} call was interrupted`, body: hangCore.bossNotice(o), requires_reply: false });
+        }
+      } catch (e) { console.error('[hang-guard] could not send the notes:', e instanceof Error ? e.message : e); }
+      breakerToast('Command hung', `${o.name}: ${o.tool} ran ${o.minutes} min without returning and was interrupted.`);
+    } else {
+      console.error(`[hang-guard] ${o.name} still silent ${o.minutes} min into a hung ${o.tool} call; telling the owner`);
+      void telegramSendToOwner(hangCore.formatHang(o, telegramSettings().lang ?? 'ru')).catch(() => { /* best-effort */ });
+      breakerToast('Agent stuck', `${o.name} is still stuck after Esc. Restart it from its card.`);
+    }
+  }
+}
+
 /** (Re)arm the always-on beats (decoupled from the optional heartbeat): the live
  *  fleet snapshot Michael reads (~8s) + the breaker/cost-ledger beat (~30s).
  *  Guarded (clear-then-set) so a re-bootstrap (changeHome recovery) OR a
@@ -6821,6 +6891,8 @@ function armAlwaysOnBeats(): void {
   if (workerWakeTimer) clearInterval(workerWakeTimer);
   workerWakeTimer = setInterval(() => { try { runWorkerWakeBeat(); } catch (e) { console.error('[worker-wake beat]', e); } }, WORKER_WAKE_POLL_MS);
   runWorkerWakeBeat(); // catch-up on arm — power-resume re-arms and drains the backlog
+  if (hangGuardTimer) clearInterval(hangGuardTimer);
+  hangGuardTimer = setInterval(() => { try { runHangGuardBeat(); } catch (e) { console.error('[hang-guard beat]', e); } }, HANG_GUARD_POLL_MS);
   // The hook socket is the whole control plane; a session where it is silently
   // unbound looks exactly like "no workers have spawned yet" (#277). Verify it
   // — bound, and the path still ours — and re-bind when it is not.

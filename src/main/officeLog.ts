@@ -16,6 +16,7 @@ interface OfficeLogCore {
   filesToPrune: (names: string[], now: Date, keepDays?: number) => string[];
   formatLine: (level: string, message: string, date: Date, source?: string) => string;
   rendererLevel: (level: unknown) => 'warn' | 'error' | null;
+  maskSecrets: (text: string) => string;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports

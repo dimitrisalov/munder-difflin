@@ -312,7 +312,9 @@
       "tempsNoCap": "不限",
       "watchdogTitle": "代理看门狗",
       "watchdogDesc": "CLI 崩溃的代理会自动恢复并继续之前的对话。超过下面的上限后，它会保持停止状态，并通过 Telegram 通知你。",
-      "watchdogMax": "每小时重启次数"
+      "watchdogMax": "每小时重启次数",
+      "watchdogHang": "命令卡住多少分钟后中断",
+      "watchdogHangDesc": "命令运行这么久仍未返回时，办公室会按 Esc 中断它，并告诉代理接下来怎么做。如果仍无效，你会收到一条 Telegram 消息。0 = 从不。"
     },
     "memory": {
       "semanticMemory": "语义记忆",

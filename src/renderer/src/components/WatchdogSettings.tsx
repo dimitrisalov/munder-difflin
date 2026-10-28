@@ -8,10 +8,12 @@ import { PixelButton } from './PixelButton';
  * A crashed agent comes back on its own with its conversation (--resume), at
  * most this many times an hour; past that it stays down and the owner hears
  * about it in Telegram. main/watchdog-core.cjs re-sanitizes whatever is saved.
+ * The same switch covers the hang guard: a tool call silent for hangMinutes is
+ * interrupted (main/hang-guard-core.cjs; 0 = never).
  */
 
-interface WatchdogConfig { enabled: boolean; maxPerHour: number }
-const DEFAULTS: WatchdogConfig = { enabled: true, maxPerHour: 3 };
+interface WatchdogConfig { enabled: boolean; maxPerHour: number; hangMinutes: number }
+const DEFAULTS: WatchdogConfig = { enabled: true, maxPerHour: 3, hangMinutes: 15 };
 
 const labelStyle: CSSProperties = {
   fontFamily: 'var(--cth-font-display)', fontSize: 8, lineHeight: '12px',
@@ -27,12 +29,18 @@ export function WatchdogSettings() {
   const { t } = useTranslation();
   const [cfg, setCfg] = useState<WatchdogConfig>(DEFAULTS);
   const [max, setMax] = useState(String(DEFAULTS.maxPerHour));
+  const [hang, setHang] = useState(String(DEFAULTS.hangMinutes));
 
   useEffect(() => {
     window.cth.getConfig().then((c) => {
-      const next = { enabled: c.watchdog?.enabled !== false, maxPerHour: c.watchdog?.maxPerHour ?? DEFAULTS.maxPerHour };
+      const next = {
+        enabled: c.watchdog?.enabled !== false,
+        maxPerHour: c.watchdog?.maxPerHour ?? DEFAULTS.maxPerHour,
+        hangMinutes: c.watchdog?.hangMinutes ?? DEFAULTS.hangMinutes
+      };
       setCfg(next);
       setMax(String(next.maxPerHour));
+      setHang(String(next.hangMinutes));
     }).catch(() => { /* defaults stand */ });
   }, []);
 
@@ -46,6 +54,12 @@ export function WatchdogSettings() {
     const n = Math.round(Number(max));
     if (Number.isFinite(n) && n >= 1 && n <= 20) save({ maxPerHour: n });
     else setMax(String(cfg.maxPerHour));
+  };
+
+  const commitHang = (): void => {
+    const n = Math.round(Number(hang));
+    if (hang.trim() !== '' && Number.isFinite(n) && n >= 0 && n <= 240) save({ hangMinutes: n });
+    else setHang(String(cfg.hangMinutes));
   };
 
   return (
@@ -66,6 +80,14 @@ export function WatchdogSettings() {
           onBlur={commitMax}
           style={inputStyle} />
       </label>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, ...labelStyle }}>
+        {t('settings.autonomy.watchdogHang')}
+        <input type="number" min="0" max="240" value={hang} disabled={!cfg.enabled}
+          onChange={(e) => setHang(e.target.value)}
+          onBlur={commitHang}
+          style={inputStyle} />
+      </label>
+      <span style={{ fontSize: 12, lineHeight: '16px', color: 'var(--cth-ink-500)' }}>{t('settings.autonomy.watchdogHangDesc')}</span>
     </div>
   );
 }

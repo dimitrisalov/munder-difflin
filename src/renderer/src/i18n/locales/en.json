@@ -312,7 +312,9 @@
       "tempsNoCap": "no cap",
       "watchdogTitle": "Agent watchdog",
       "watchdogDesc": "An agent whose CLI crashes comes back on its own and continues its conversation. Past the limit below it stays down and you get a Telegram message.",
-      "watchdogMax": "restarts per hour"
+      "watchdogMax": "restarts per hour",
+      "watchdogHang": "minutes before a hung command is interrupted",
+      "watchdogHangDesc": "A command that runs this long without returning gets Esc, and the agent is told how to go on. If that does not help, you get a Telegram message. 0 = never."
     },
     "memory": {
       "semanticMemory": "Semantic memory",

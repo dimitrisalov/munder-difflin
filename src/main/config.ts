@@ -269,8 +269,9 @@ export interface HarnessConfig {
   temps?: TempsConfig;
   /** Agent watchdog (wave 5): a crashed agent is revived with --resume, at most
    *  maxPerHour times an hour (default 3). On unless enabled is false; read
-   *  through watchdog-core.cjs's sanitize, never raw. */
-  watchdog?: { enabled?: boolean; maxPerHour?: number };
+   *  through watchdog-core.cjs's sanitize, never raw. hangMinutes: a tool call
+   *  silent this long is interrupted (default 15, 0 = never; hang-guard-core.cjs). */
+  watchdog?: { enabled?: boolean; maxPerHour?: number; hangMinutes?: number };
   /** The office boss's look on the floor (a cast name, e.g. 'theo'). The god is
    *  rebuilt on every launch, so a pick made in Edit Agent is kept here or it
    *  would revert to the default. Unset = 'michael'. */
