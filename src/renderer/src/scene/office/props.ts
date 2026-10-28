@@ -3,24 +3,28 @@
 // in local coordinates from the prop's top-left tile. A layout places them
 // (mapBuild.ts `props`); OfficeFloor draws each once, redraws the ones with an
 // idle animation every frame, and plays the in-use animations below while an
-// agent runs the matching errand ('bong', 'gaming', 'console', 'nap').
+// agent runs the matching errand ('bong', 'gaming', 'console', 'nap', and in
+// Mia's studio 'bask', 'pin', 'sketch').
 
 import type { Graphics } from 'pixi.js';
 
 export type PropKind =
   | 'bong' | 'grinder' | 'console' | 'gaming-pc'
   | 'cat-bed' | 'scratching-post' | 'food-bowl'
-  | 'bell' | 'easel';
+  | 'bell' | 'easel'
+  | 'heat-stone' | 'moodboard' | 'layout-table';
 
 /** Footprint in tiles (w × h), for the map builder. */
 export const PROP_SIZE: Record<PropKind, { w: number; h: number }> = {
   bong: { w: 1, h: 1 }, grinder: { w: 1, h: 1 }, console: { w: 1, h: 1 }, 'gaming-pc': { w: 1, h: 1 },
   'cat-bed': { w: 1, h: 1 }, 'scratching-post': { w: 1, h: 2 }, 'food-bowl': { w: 1, h: 1 },
   bell: { w: 1, h: 1 }, easel: { w: 1, h: 2 },
+  'heat-stone': { w: 2, h: 1 }, moodboard: { w: 4, h: 2 }, 'layout-table': { w: 3, h: 2 },
 };
 
-/** Lies flat on the floor: drawn under anyone standing on it (Theo in his bed). */
-export const FLAT_PROPS: ReadonlySet<string> = new Set(['cat-bed']);
+/** Lies flat on the floor: drawn under anyone standing on it (Theo in his bed,
+ *  Mia on her warm stone). */
+export const FLAT_PROPS: ReadonlySet<string> = new Set(['cat-bed', 'heat-stone']);
 
 export function isPropKind(kind: string): kind is PropKind {
   return Object.prototype.hasOwnProperty.call(PROP_SIZE, kind);
@@ -125,6 +129,72 @@ export function drawProp(kind: string, g: Graphics, t = 0): void {
       g.rect(2, 18, 12, 1.5).fill(0x7a5030);
       break;
     }
+    case 'heat-stone': {
+      // a flat sandstone slab under the window, sun-warmed in the middle: Mia
+      // basks here
+      g.ellipse(16, 11, 14.5, 4.5).fill(0x9a6e52).stroke({ width: 1, color: INK });
+      g.ellipse(16, 10, 13, 3.6).fill(0xd2a47c);
+      g.ellipse(14, 9.2, 8, 1.8).fill(0xe6c29c);
+      g.ellipse(17, 10.5, 5, 1.4).fill({ color: 0xf08a4a, alpha: 0.35 });
+      for (const [x, y] of [[6, 10], [24, 11], [20, 9]] as const) g.rect(x, y, 1, 1).fill(0xb48462);
+      break;
+    }
+    case 'moodboard': {
+      // a cork board on the wall: photos, sketches, colour chips, pins and a
+      // red thread between two ideas
+      g.rect(1, 2, 62, 28).fill(0x6b4a2a).stroke({ width: 1, color: INK });
+      g.rect(3, 4, 58, 24).fill(0xc89a62);
+      for (const [x, y] of [[9, 7], [22, 19], [44, 9], [53, 22], [33, 6]] as const) g.rect(x, y, 1, 1).fill(0xa87a46);
+      const photo = (x: number, y: number, w: number, h: number, c: number): void => {
+        g.rect(x, y, w, h).fill(0xfbf8ef).stroke({ width: 0.5, color: 0x8a7a66 });
+        g.rect(x + 1.5, y + 1.5, w - 3, h - 5).fill(c);
+      };
+      photo(5, 6, 13, 11, 0x5b8fb0);   // a sea photo
+      g.rect(6.5, 12, 10, 2).fill(0x3e6f8c);
+      photo(20, 8, 10, 12, 0xd98c6a);  // a sunset
+      g.circle(25, 12, 2).fill(0xf6d06a);
+      g.rect(33, 5, 12, 10).fill(0xfbf8ef).stroke({ width: 0.5, color: 0x8a7a66 }); // a sketch
+      g.rect(35, 7, 6, 1).fill(0x9a9aa8); g.rect(35, 9, 8, 1).fill(0x9a9aa8); g.rect(35, 11, 4, 3).stroke({ width: 0.5, color: 0x9a9aa8 });
+      photo(47, 6, 11, 13, 0x8fb39a);  // leaves
+      g.rect(50, 9, 1, 6).fill(0x5d8a68);
+      // the palette: five chips along the bottom
+      [0xe2665f, 0x2e3a5c, 0xe0b84a, 0x8fb39a, 0xf3ead8].forEach((c, i) => {
+        g.rect(6 + i * 7, 20, 6, 6).fill(c).stroke({ width: 0.5, color: 0x6b5a46 });
+      });
+      g.moveTo(25, 8).lineTo(52, 7).stroke({ width: 0.6, color: 0xc0392b });
+      for (const [x, y, c] of [[11, 6, 0xd83a3a], [25, 8, 0xd83a3a], [39, 5, 0x3a6fd8], [52, 7, 0xd83a3a], [44, 21, 0x3a6fd8]] as const) {
+        g.circle(x, y, 1.2).fill(c);
+      }
+      g.rect(42, 19, 14, 7).fill(0xf6e7a0);   // a sticky note
+      g.rect(44, 21, 9, 1).fill(0xb8a35a); g.rect(44, 23, 6, 1).fill(0xb8a35a);
+      break;
+    }
+    case 'layout-table': {
+      // a big drafting table: a layout in progress, a cutting mat, a swatch
+      // fan, a pen tablet, and an architect's lamp on the right
+      g.rect(3, 22, 3, 9).fill(0x6b4a2a);
+      g.rect(42, 22, 3, 9).fill(0x6b4a2a);
+      g.rect(1, 7, 46, 16).fill(0xd9b98a).stroke({ width: 1, color: INK });
+      g.rect(1, 21, 46, 2).fill(0xb8956a);
+      g.rect(4, 9, 15, 11).fill(0xfbf8ef).stroke({ width: 0.5, color: 0x8a7a66 }); // the layout
+      g.rect(6, 11, 11, 3).fill(0xe2665f);
+      g.rect(6, 15, 5, 3).fill(0x2e3a5c);
+      g.rect(12, 15, 5, 1).fill(0x9a9aa8); g.rect(12, 17, 4, 1).fill(0x9a9aa8);
+      g.rect(21, 10, 11, 9).fill(0x4f8f6a);                                     // cutting mat
+      for (let x = 23; x < 32; x += 3) g.rect(x, 10, 0.5, 9).fill({ color: 0xcfe8d8, alpha: 0.6 });
+      for (let y = 12; y < 19; y += 3) g.rect(21, y, 11, 0.5).fill({ color: 0xcfe8d8, alpha: 0.6 });
+      g.rect(22, 13, 9, 5).fill(0x26262b);                                      // pen tablet on the mat
+      g.rect(23, 14, 7, 3).fill(0x3d5a80);
+      g.rect(29, 18, 6, 1).fill(0x9a9aa8);                                      // the pen
+      [0xe2665f, 0xe0b84a, 0x8fb39a, 0x5b8fb0].forEach((c, i) => {             // swatch fan
+        g.poly([34, 18, 35 + i * 2, 11, 37 + i * 2, 11.5, 35.5, 18]).fill(c);
+      });
+      g.rect(42, 15, 4, 2).fill(0x3a3a44);                                      // lamp base
+      g.moveTo(44, 15).lineTo(41, 6).lineTo(37, 3).stroke({ width: 1, color: 0x3a3a44 });
+      g.poly([33, 2, 39, 0, 41, 5, 35, 7]).fill(0xe2665f).stroke({ width: 0.8, color: INK });
+      g.poly([35, 7, 41, 5, 40, 12, 30, 14]).fill({ color: 0xfff2c4, alpha: 0.28 });
+      break;
+    }
   }
 }
 
@@ -196,4 +266,46 @@ export function drawNap(g: Graphics, t: number): void {
     for (let k = 1; k < size; k++) g.rect(x + size - k, y + k, 1, 1).fill(fill);
     g.rect(x, y + size, size + 1, 1).fill(fill);
   }
+}
+
+/** Mia basking on her warm stone: heat shimmering up around her. Local
+ *  coordinates are the stone's left tile. */
+export function drawBask(g: Graphics, t: number): void {
+  g.clear();
+  for (let i = 0; i < 4; i++) {
+    const ph = (t * 0.5 + i / 4) % 1;
+    const x0 = 4 + i * 7;
+    for (let k = 0; k < 5; k++) {
+      const y = 6 - ph * 22 - k * 2;
+      g.rect(x0 + Math.sin(t * 3 + k + i) * 1.5, y, 1, 1.5).fill({ color: 0xffb27a, alpha: 0.5 * (1 - ph) });
+    }
+  }
+  g.ellipse(16, 10, 9 + Math.sin(t * 2) * 1.2, 2.5).fill({ color: 0xff9a5a, alpha: 0.18 });
+}
+
+/** Pinning a new find on the moodboard: a card swings in and settles, a pin
+ *  glints. Local coordinates are the board's top-left tile. */
+export function drawPinning(g: Graphics, t: number): void {
+  g.clear();
+  const ph = Math.min(1, (t % 6) / 1.2);
+  const x = 34 + (1 - ph) * 10, y = 17 + (1 - ph) * 9;
+  g.rect(x, y, 7, 6).fill(0xfbf8ef).stroke({ width: 0.5, color: 0x8a7a66 });
+  g.rect(x + 1, y + 1, 5, 3).fill([0x9b7ad8, 0xe2665f, 0x5bb0a0][Math.floor(t / 6) % 3]);
+  if (ph >= 1) g.circle(x + 3.5, y, 1.2).fill(0xd83a3a);
+  const gl = (t * 0.8) % 1;
+  g.rect(6 + gl * 50, 5 + Math.sin(gl * Math.PI) * 2, 1.5, 1.5).fill({ color: 0xffffff, alpha: 0.7 * Math.sin(gl * Math.PI) });
+}
+
+/** Painting at the easel: strokes appearing on the canvas, one by one. Local
+ *  coordinates are the easel's top tile (its canvas is 1..15 × 6..18). */
+export function drawSketching(g: Graphics, t: number): void {
+  g.clear();
+  const strokes: Array<[number, number, number, number, number]> = [
+    [3, 14, 10, 1.5, 0x2e3a5c], [4, 9, 4, 2, 0xe2665f], [9, 8, 4, 1, 0xe0b84a],
+    [3, 12, 6, 1, 0x8fb39a], [10, 11, 3, 3, 0x9b7ad8], [6, 16, 7, 1, 0xe2665f],
+  ];
+  const n = Math.floor(t * 0.9) % (strokes.length + 2);
+  strokes.slice(0, n).forEach(([x, y, w, h, c]) => g.rect(x, y, w, h).fill(c));
+  const [bx, by] = strokes[Math.min(n, strokes.length - 1)];
+  g.rect(bx + 2 + Math.sin(t * 6), by - 3, 1, 3).fill(0x7a5030);           // the brush
 }

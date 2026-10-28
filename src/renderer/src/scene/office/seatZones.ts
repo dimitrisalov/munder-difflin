@@ -1,8 +1,8 @@
 // Which zone of a zoned map an agent sits in, by what the agent does.
 //
 // On the loft, desks belong to departments: research sits in the library,
-// writers and designers in the studio, developers in the dev corner, temps at
-// the guest desks. The floor asks this for each agent and gives it a free desk
+// designers in Mia's art-director studio (the atelier), writers in the content
+// studio, developers in the dev corner, temps at the guest desks. The floor asks this for each agent and gives it a free desk
 // in that zone first, falling back to any free desk. Matching is on the
 // agent's own words (role, description, name), in English or Russian.
 
@@ -10,7 +10,8 @@ export interface SeatAgent { id: string; name?: string; description?: string; ro
 
 const RULES: Array<[zone: string, words: RegExp]> = [
   ['library', /research|analy|ресёрч|ресерч|исследов|аналит/i],
-  ['studio', /copy|writ|edit|content|design|artist|illustrat|копирайт|текст|редакт|контент|дизайн|худож|иллюстр/i],
+  ['atelier', /design|art direct|artist|illustrat|дизайн|арт-дир|худож|иллюстр/i],
+  ['studio', /copy|writ|edit|content|копирайт|текст|редакт|контент/i],
   ['dev', /develop|engineer|program|coder|\bcode\b|\bdev\b|разработ|программ|инженер/i],
 ];
 

@@ -55,7 +55,8 @@ export type Facing = 'up' | 'down' | 'left' | 'right';
  *  boss's 'nap' in his bed. */
 export type ErrandKind =
   | 'water' | 'window' | 'dispenser' | 'fridge' | 'shelf' | 'bin' | 'smoke'
-  | 'bong' | 'gaming' | 'console' | 'nap';
+  | 'bong' | 'gaming' | 'console' | 'nap'
+  | 'bask' | 'pin' | 'sketch';
 
 /** One idle-errand anchor: a stand tile + facing, an `fx` tile for the ambient
  *  animation, a duration, and an optional god-only restriction. */
@@ -66,6 +67,8 @@ export interface ErrandSpot {
   fx: Tile;
   duration: number;
   godOnly?: boolean;
+  /** Only the agent drawn as this cast member does it (Mia's own studio). */
+  character?: string;
   /** Sit at the stand tile instead of standing (gaming chair, floor, bed). */
   seated?: boolean;
 }
@@ -319,7 +322,7 @@ export const LOFT_THEME: ThemeConfig = {
   tilesets: OFFICE_THEME.tilesets,
   // The boss's chair first, then every department desk; the lounge's gaming
   // seat is not a desk.
-  primarySeatNames: ['desk-ceo', ...loftBuild.seats.map((s) => s.name).filter((n) => /^(library|studio|dev|guests)-seat-/.test(n))],
+  primarySeatNames: ['desk-ceo', ...loftBuild.seats.map((s) => s.name).filter((n) => /^(atelier|library|studio|dev|guests)-seat-/.test(n))],
   cafeSeatNames: ['cafe-seat-1', 'cafe-seat-2', 'cafe-seat-3', 'cafe-seat-4'],
   cafeStands: [
     ['cafe-stand-coffee', 'coffee'],

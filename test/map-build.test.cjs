@@ -56,12 +56,12 @@ test('the loft builds clean: no overlaps, every seat and point reachable', () =>
   assert.equal(r.map.height, 26);
   const names = r.seats.map((s) => s.name);
   assert.ok(names.includes('desk-ceo'));
-  for (const zone of ['library', 'studio', 'dev', 'guests']) {
+  for (const zone of ['atelier', 'library', 'studio', 'dev', 'guests']) {
     assert.ok(names.some((n) => n.startsWith(`${zone}-seat-`)), `${zone} has desks`);
   }
   assert.deepEqual(r.map.layers.map((l) => l.name),
     ['floor', 'walls', 'furniture-below', 'furniture-above', 'collision', 'spawn-points', 'zones']);
-  for (const z of ['boardroom', 'cafeteria', 'lounge', 'reception', 'theo']) {
+  for (const z of ['atelier', 'boardroom', 'cafeteria', 'lounge', 'reception', 'theo']) {
     assert.ok(layer(r.map, 'zones').objects.some((o) => o.name === z), z);
   }
 });
@@ -128,7 +128,9 @@ test('a walled room: posts down the side, a band below, a door gap, closed corne
 test('agents sit by department', () => {
   assert.equal(seatZoneFor({ id: 'phyllis-1', description: 'Researcher' }), 'library');
   assert.equal(seatZoneFor({ id: 'k', description: 'копирайтер офиса' }), 'studio');
-  assert.equal(seatZoneFor({ id: 'p', description: 'Designer' }), 'studio');
+  assert.equal(seatZoneFor({ id: 'p', description: 'Designer' }), 'atelier');
+  assert.equal(seatZoneFor({ id: 'mia', description: 'Дизайнер офиса: питч-деки' }), 'atelier');
+  assert.equal(seatZoneFor({ id: 'k2', description: 'Content writer' }), 'studio');
   assert.equal(seatZoneFor({ id: 'r', description: 'разработчик' }), 'dev');
   assert.equal(seatZoneFor({ id: 'temp-kelly-headlines', description: 'Copywriter' }), 'guests');
   assert.equal(seatZoneFor({ id: 'god', isGod: true }), 'theo');
@@ -175,6 +177,10 @@ test('the loft: every errand spot can be walked to, and every prop is known', ()
   const kinds = new Set(LOFT_ERRANDS.map((s) => s.kind));
   for (const k of ['bong', 'gaming', 'console', 'nap', 'smoke']) assert.ok(kinds.has(k), k);
   for (const s of LOFT_ERRANDS.filter((e) => e.kind === 'nap' || e.kind === 'smoke')) assert.ok(s.godOnly, `${s.kind} is Theo's`);
+  for (const k of ['bask', 'pin', 'sketch']) {
+    const s = LOFT_ERRANDS.find((e) => e.kind === k);
+    assert.equal(s && s.character, 'mia', `${k} is Mia's`);
+  }
   for (const p of LOFT_LAYOUT.props) assert.ok(props.isPropKind(p.kind), p.kind);
   // The gaming errand sits in the gaming desk's chair.
   const gaming = LOFT_ERRANDS.find((s) => s.kind === 'gaming');
@@ -186,7 +192,7 @@ test('the loft: every errand spot can be walked to, and every prop is known', ()
 function fakeGraphics() {
   const g = { shapes: 0, cleared: 0 };
   for (const m of ['rect', 'circle', 'ellipse', 'poly']) g[m] = () => { g.shapes++; return g; };
-  g.fill = () => g; g.stroke = () => g; g.clear = () => { g.cleared++; g.shapes = 0; return g; };
+  g.fill = () => g; g.stroke = () => g; g.moveTo = () => g; g.lineTo = () => { g.shapes++; return g; }; g.clear = () => { g.cleared++; g.shapes = 0; return g; };
   return g;
 }
 
@@ -196,7 +202,7 @@ test('props draw: every kind draws something, the in-use animations run', () => 
     props.drawProp(kind, g, 1.5);
     assert.ok(g.shapes > 0, kind);
   }
-  for (const fn of ['drawBongSession', 'drawGamingSession', 'drawConsoleSession', 'drawNap']) {
+  for (const fn of ['drawBongSession', 'drawGamingSession', 'drawConsoleSession', 'drawNap', 'drawBask', 'drawPinning', 'drawSketching']) {
     for (const t of [0, 1, props.GRIND_SECONDS + 0.5, 12]) {
       const g = fakeGraphics();
       props[fn](g, t);
@@ -206,6 +212,22 @@ test('props draw: every kind draws something, the in-use animations run', () => 
   assert.equal(props.idleAnimated('gaming-pc'), true);
   assert.equal(props.idleAnimated('bong'), false);
   assert.ok(props.FLAT_PROPS.has('cat-bed'));
+  assert.ok(props.FLAT_PROPS.has('heat-stone'));
+});
+
+test("Mia's atelier: a walled room with a door into the library, her desk, her things", () => {
+  const r = buildMap(LOFT_LAYOUT, FURNITURE, officeTilesets, props.PROP_SIZE);
+  const room = LOFT_LAYOUT.rooms.find((rm) => rm.x0 === 1 && rm.y0 === 3);
+  assert.ok(room, 'the atelier is a room');
+  assert.equal(at(r.map, 'walls', 10, 3), 611, 'post cap by the library');
+  assert.equal(at(r.map, 'walls', 10, 7), 0, 'door into the library');
+  assert.equal(at(r.map, 'collision', 10, 8), 0);
+  assert.equal(at(r.map, 'walls', 5, 9), 522, 'wall band below');
+  const seat = r.seats.find((s) => s.name === 'atelier-seat-1');
+  assert.deepEqual(seat && [seat.x, seat.y, seat.zone], [7, 7, 'atelier']);
+  const kinds = r.props.filter((p) => p.x <= 9 && p.y <= 8).map((p) => p.kind).sort();
+  assert.deepEqual(kinds, ['easel', 'heat-stone', 'layout-table', 'moodboard']);
+  assert.equal(at(r.map, 'collision', 1, 3), 0, 'she can lie on the warm stone');
 });
 
 test('props: the RGB light walks the colour wheel', () => {

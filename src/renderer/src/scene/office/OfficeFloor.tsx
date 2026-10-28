@@ -16,7 +16,7 @@ import { daylightAt, hoursOf, type Daylight } from './daylight';
 import { screenModeFor } from './screenMode';
 import {
   drawProp, idleAnimated, FLAT_PROPS, GRIND_SECONDS,
-  drawBongSession, drawGamingSession, drawConsoleSession, drawNap,
+  drawBongSession, drawGamingSession, drawConsoleSession, drawNap, drawBask, drawPinning, drawSketching,
 } from './props';
 import { colors } from '@/design/tokens';
 import { loadTheme, resolveThemeMap, themeTilesetUrls } from './themeLoader';
@@ -102,7 +102,10 @@ const ERRAND_THOUGHTS: Record<ErrandKind, readonly string[]> = {
   bong:      ['office.errand.bong.0', 'office.errand.bong.1', 'office.errand.bong.2'],
   gaming:    ['office.errand.gaming.0', 'office.errand.gaming.1', 'office.errand.gaming.2'],
   console:   ['office.errand.console.0', 'office.errand.console.1', 'office.errand.console.2'],
-  nap:       ['office.errand.nap.0', 'office.errand.nap.1', 'office.errand.nap.2']
+  nap:       ['office.errand.nap.0', 'office.errand.nap.1', 'office.errand.nap.2'],
+  bask:      ['office.errand.bask.0', 'office.errand.bask.1', 'office.errand.bask.2'],
+  pin:       ['office.errand.pin.0', 'office.errand.pin.1', 'office.errand.pin.2'],
+  sketch:    ['office.errand.sketch.0', 'office.errand.sketch.1', 'office.errand.sketch.2']
 };
 
 /** The bong errand grinds first; once it's ground, the thought changes. */
@@ -944,6 +947,12 @@ export function OfficeFloor() {
           drawConsoleSession(g, t);
         } else if (kind === 'nap') {
           drawNap(g, t);
+        } else if (kind === 'bask') {
+          drawBask(g, t);
+        } else if (kind === 'pin') {
+          drawPinning(g, t);
+        } else if (kind === 'sketch') {
+          drawSketching(g, t);
         } else if (kind === 'bin') {
           // a paper ball arcing in from the agent's side, once per second
           const ph = (t * 1.0) % 1;
@@ -1017,6 +1026,7 @@ export function OfficeFloor() {
         } else {
           const candidates: Array<[Agent, Runtime]> = [];
           for (const a of useStore.getState().agents) {
+            if (spot.character && a.character !== spot.character) continue; // her studio's spots are hers
             const r = runtimes.get(a.id);
             if (r && breakEligible(a, r)) candidates.push([a, r]);
           }

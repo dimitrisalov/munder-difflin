@@ -886,7 +886,10 @@
         "zzz… 😴",
         "resting my eyes",
         "do not disturb the boss"
-      ]
+      ],
+      "bask": ["warm stone, warm ideas ☀️", "cold-blooded, recharging", "my best ideas come at 30 °C"],
+      "pin": ["pinning this one 📌", "this goes on the board", "colour story is coming together"],
+      "sketch": ["just a quick sketch 🎨", "finding the shape", "loosening up the hand"]
     },
     "suckUp": [
       "already shipped {{done}} tasks, {{godName}}. raise? 🥺",
