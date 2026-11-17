@@ -28,6 +28,8 @@ const MAIN_ASSETS = [
   ['src/main/hang-guard-core.cjs', 'out/main/hang-guard-core.cjs'],
   // An agent waiting on a terminal question → Telegram (pure CJS) — required by index.ts.
   ['src/main/needs-you-core.cjs', 'out/main/needs-you-core.cjs'],
+  // The folders the boss reads without a prompt (pure CJS) — required by index.ts.
+  ['src/main/boss-dirs-core.cjs', 'out/main/boss-dirs-core.cjs'],
   // Task chains and review (pure CJS) — required by index.ts.
   ['src/main/taskFlow-core.cjs', 'out/main/taskFlow-core.cjs'],
   // Knowledge Graph core (pure-JS, no native deps) — required by knowledge.ts.

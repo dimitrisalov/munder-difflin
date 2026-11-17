@@ -357,6 +357,10 @@ interface NeedsYouCore {
 }
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const needsYouCore = require('./needs-you-core.cjs') as NeedsYouCore;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const bossDirsCore = require('./boss-dirs-core.cjs') as {
+  bossReadDirs: (o: { registeredRepos: string[]; agents: Array<{ cwd?: string; isGod?: boolean }>; ownCwd?: string; home: string; platform: string }) => string[];
+};
 const needsYou = new needsYouCore.NeedsYou();
 // Worker inbox-wake watchdog (#151): finds idle workers with undrained inbox mail
 // and types the same guarded nudge the renderer would have (so a throttled
@@ -2659,6 +2663,28 @@ async function startTelegramReplyServer(): Promise<void> {
   catch (e) { console.error('[telegram] could not write reply config:', e instanceof Error ? e.message : e); }
 }
 
+/** A start that failed for a reason that can pass (network not up yet after a
+ *  logon, a timeout) is tried again on its own: 10 s, 30 s, 1, 2, then every 5
+ *  minutes while the bot is on. On the PC (29.10) two of three starts timed out
+ *  on getMe and the bot stayed off until someone pressed Start. */
+const TELEGRAM_RETRY_MS = [10_000, 30_000, 60_000, 120_000, 300_000];
+let telegramRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let telegramRetryAttempt = 0;
+
+function scheduleTelegramRetry(reason: string): void {
+  const s = telegramSettings();
+  if (telegramRetryTimer || !s.enabled || !s.botToken) return;
+  // Only the token itself being wrong cannot pass by waiting.
+  if (/token rejected|no bot token/i.test(reason)) return;
+  const wait = TELEGRAM_RETRY_MS[Math.min(telegramRetryAttempt, TELEGRAM_RETRY_MS.length - 1)];
+  telegramRetryAttempt++;
+  console.warn(`[telegram] start failed (${reason}); trying again in ${Math.round(wait / 1000)} s`);
+  telegramRetryTimer = setTimeout(() => {
+    telegramRetryTimer = null;
+    void startTelegram().then((st) => { if (!st.error) console.log('[telegram] started on retry'); });
+  }, wait);
+}
+
 /** Start (or restart) polling with the saved token. Persists `enabled` on success. */
 async function startTelegram(): Promise<TelegramStatus> {
   const s = telegramSettings();
@@ -2682,8 +2708,10 @@ async function startTelegram(): Promise<TelegramStatus> {
     telegramBot = null;
     telegramLastError = r.error;
     notifyTelegramState();
+    scheduleTelegramRetry(r.error ?? 'unknown error');
     return telegramStatus();
   }
+  telegramRetryAttempt = 0;
   telegramLastError = undefined;
   writeTelegramSettings({ enabled: true, botUsername: r.botUsername });
   await startTelegramReplyServer();
@@ -2696,6 +2724,7 @@ async function startTelegram(): Promise<TelegramStatus> {
 /** Stop polling and the reply endpoint. Lifecycle-safe; does NOT clear `enabled`
  *  (only the user's Stop does, in the IPC handler — same rule as Slack). */
 function stopTelegram(): void {
+  if (telegramRetryTimer) { clearTimeout(telegramRetryTimer); telegramRetryTimer = null; }
   try { telegramBot?.stop(); } catch (e) { console.error('[telegram] stop failed:', e); }
   telegramBot = null;
   try { telegramReplyServer?.stop(); } catch (e) { console.error('[telegram] reply stop failed:', e); }
@@ -6966,17 +6995,19 @@ function runWorkerWakeBeat(): void {
   }
 }
 
-/** Folders the boss may read without asking: the registered repos and every
- *  agent's working folder. Reviewing an agent's work (Mia's slides in
- *  D:\AI\work\design) stopped Theo on "Allow this read outside the working
- *  directories?" for as long as nobody was at the PC (28.10). */
+/** Folders the boss may read without asking (boss-dirs-core.cjs): the
+ *  registered repos, every agent's folder and the folder holding it, so that
+ *  reviewing their work needs no permission prompt. Only existing folders. */
 function godFloorDirs(ownCwd: string | undefined): string[] {
-  const dirs = new Set<string>(readConfig().registeredRepos ?? []);
+  let agents: Array<{ cwd?: string; isGod?: boolean }> = [];
   try {
-    for (const a of Object.values(hive.registry().agents ?? {})) if (a && !a.archived && a.cwd) dirs.add(a.cwd);
+    const reg = hive.registry();
+    agents = Object.entries(reg.agents ?? {}).map(([id, a]) => ({ cwd: a?.cwd, isGod: id === reg.godId }));
   } catch { /* no hive yet */ }
-  if (ownCwd) dirs.delete(ownCwd);
-  return [...dirs].filter((d) => { try { return statSync(d).isDirectory(); } catch { return false; } });
+  const dirs = bossDirsCore.bossReadDirs({
+    registeredRepos: readConfig().registeredRepos ?? [], agents, ownCwd, home: homedir(), platform: process.platform
+  });
+  return dirs.filter((d) => { try { return statSync(d).isDirectory(); } catch { return false; } });
 }
 
 /** Remove the Yes/No buttons from the Telegram messages of a question that has
