@@ -386,6 +386,7 @@ export interface HarnessConfig {
   circuitBreaker?: CircuitBreakerConfig;
   /** Enterprise Knowledge Graph (multimodal context for agents). Default OFF. */
   knowledgeGraph?: KnowledgeGraphConfig;
+  obsidianVault?: { path?: string; history?: boolean };
   /** Terminal theme, mirrored into each agent's per-session Claude settings. */
   terminalTheme?: 'light' | 'dark';
   /** TV-show office themes feature flag (Settings picker + switch flow). Default OFF. */
@@ -416,6 +417,17 @@ export interface MemoryStatus {
 }
 
 /** Enterprise Knowledge Graph — corpus status, one document, and a search hit. */
+/** The owner's Obsidian vault as the knowledge base (main/vault.ts). */
+export interface VaultStatus {
+  path: string | null;
+  exists: boolean;
+  notes: number;
+  history: boolean;
+  lastSnapshotAt?: number;
+  lastChange?: string;
+  error?: string;
+}
+
 export interface KnowledgeStatus {
   enabled: boolean;
   root: string;
@@ -943,6 +955,12 @@ const api = {
    *  the per-agent outcomes ({ id, condensed, reason, oldBytes?, newBytes? }). */
   reflectNow: (id?: string): Promise<Array<{ id: string; condensed: boolean; reason: string; oldBytes?: number; newBytes?: number }>> =>
     ipcRenderer.invoke('memory:reflectNow', id),
+
+  // ─── The owner's Obsidian vault (the team's knowledge base) ───────────────
+  vaultStatus: (): Promise<VaultStatus> => ipcRenderer.invoke('vault:status'),
+  vaultSnapshot: (): Promise<{ ok: boolean; changed: number; error?: string }> => ipcRenderer.invoke('vault:snapshot'),
+  /** Folder picker; null when cancelled. */
+  vaultPick: (): Promise<string | null> => ipcRenderer.invoke('vault:pick'),
 
   // ─── Enterprise Knowledge Graph (multimodal context for agents) ───────────
   kgStatus: (): Promise<KnowledgeStatus> => ipcRenderer.invoke('kg:status'),

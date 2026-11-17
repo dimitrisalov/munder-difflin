@@ -312,6 +312,10 @@ export interface HarnessConfig {
   circuitBreaker?: CircuitBreakerConfig;
   /** Enterprise Knowledge Graph (multimodal context for agents). Default OFF. */
   knowledgeGraph?: KnowledgeGraphConfig;
+  /** The owner's Obsidian vault as the team's knowledge base (vault-core.cjs):
+   *  every agent may read and edit it, and it is snapshotted into a git history
+   *  in userData unless history is false. Unset path = off. */
+  obsidianVault?: { path?: string; history?: boolean };
   /** Fire native desktop notifications on agent lifecycle events (idle finish / waiting for input). */
   notifications?: boolean;
   /** Opt-in "strong keep-alive": while ≥1 agent PTY is live, escalate the power

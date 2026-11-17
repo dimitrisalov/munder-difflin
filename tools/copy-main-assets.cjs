@@ -30,6 +30,8 @@ const MAIN_ASSETS = [
   ['src/main/needs-you-core.cjs', 'out/main/needs-you-core.cjs'],
   // The folders the boss reads without a prompt (pure CJS) — required by index.ts.
   ['src/main/boss-dirs-core.cjs', 'out/main/boss-dirs-core.cjs'],
+  // The Obsidian vault as the knowledge base (pure CJS) — required by vault.ts.
+  ['src/main/vault-core.cjs', 'out/main/vault-core.cjs'],
   // Task chains and review (pure CJS) — required by index.ts.
   ['src/main/taskFlow-core.cjs', 'out/main/taskFlow-core.cjs'],
   // Knowledge Graph core (pure-JS, no native deps) — required by knowledge.ts.

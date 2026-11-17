@@ -30,6 +30,7 @@ import { WatchdogSettings } from './WatchdogSettings';
 import { OfficeMapPicker } from './OfficeMapPicker';
 import { IntegrationsStatus } from './IntegrationsStatus';
 import { PanelSettings } from './PanelSettings';
+import { VaultSettings } from './VaultSettings';
 import { REALTIME_MODEL } from '@shared/realtimePricing';
 import { RealtimeDevicePicker } from '@/realtime/DevicePicker';
 import { CostHud } from '@/realtime/CostHud';
@@ -1453,6 +1454,10 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
                           </div>
                         )}
                       </div>
+
+                      <div style={{ height: 1, background: 'var(--cth-ink-300)' }} />
+                      {/* The owner's Obsidian vault as the team's knowledge base. */}
+                      <VaultSettings />
 
                       <div style={{ height: 1, background: 'var(--cth-ink-300)' }} />
                       {/* Backups of the hive + roster, and restore (wave 5). */}

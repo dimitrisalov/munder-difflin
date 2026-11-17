@@ -81,6 +81,7 @@ import { WorkerWakeWatchdog, WORKER_WAKE_REPORT_MS, activityEvidenceAt, type Wor
 import { inboxNudgeText } from '../shared/hiveNudge';
 import { remoteControlLabel, remoteControlLaunchArgs } from '../shared/providerAutomation';
 import { OfficeLog, officeLogCore } from './officeLog';
+import { VaultHistory, vaultCore } from './vault';
 import { OfficeBackups } from './backups';
 import { resolveGodName } from '../shared/godIdentity';
 import { fetchHireManifest, readHireManifestFiles, listHireTemplates } from './hire';
@@ -362,6 +363,14 @@ const bossDirsCore = require('./boss-dirs-core.cjs') as {
   bossReadDirs: (o: { registeredRepos: string[]; agents: Array<{ cwd?: string; isGod?: boolean }>; ownCwd?: string; home: string; platform: string }) => string[];
 };
 const needsYou = new needsYouCore.NeedsYou();
+// The owner's Obsidian vault (the team's knowledge base): every change kept in
+// a git history outside the vault. See vault.ts.
+const vaultHistory = new VaultHistory(() => join(app.getPath('userData'), 'vault-history.git'), () => readConfig().obsidianVault);
+/** The vault folder when one is set and present on this machine. */
+function knowledgeVaultPath(): string | undefined {
+  const v = vaultCore.sanitizeVault(readConfig().obsidianVault);
+  return v.path && existsSync(v.path) ? v.path : undefined;
+}
 // Worker inbox-wake watchdog (#151): finds idle workers with undrained inbox mail
 // and types the same guarded nudge the renderer would have (so a throttled
 // background window can't leave a worker parked on an unread inbox forever).
@@ -3989,8 +3998,10 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
           // the OS sandbox must let it through (empty when memory is off).
           extraWritableDirs: [
             memory.env().MEMPALACE_PALACE_PATH,
+            knowledgeVaultPath(),
             ...(opts.hive.isGod ? godFloorDirs(opts.cwd) : [])
-          ].filter((p): p is string => !!p)
+          ].filter((p): p is string => !!p),
+          knowledgeVault: knowledgeVaultPath()
         }
       );
       opts.args = [...(opts.args ?? []), ...inj.args];
@@ -5505,6 +5516,16 @@ ipcMain.handle('telegram:setToken', async (_evt, token: unknown) => {
   return telegramStatus();
 });
 ipcMain.handle('telegram:start', () => startTelegram());
+// The owner's Obsidian vault (Settings → Memory).
+ipcMain.handle('vault:status', () => vaultHistory.status());
+ipcMain.handle('vault:snapshot', () => vaultHistory.snapshot());
+ipcMain.handle('vault:pick', async () => {
+  const win = BrowserWindow.getFocusedWindow();
+  const r = win
+    ? await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
+    : await dialog.showOpenDialog({ properties: ['openDirectory'] });
+  return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
+});
 /** Stop is a user decision and must survive a restart, so it clears `enabled`
  *  before tearing down (lifecycle teardowns call stopTelegram() directly). */
 ipcMain.handle('telegram:stop', () => {
@@ -7044,6 +7065,7 @@ async function runNeedsYouBeat(): Promise<void> {
 /** How often the hang guard looks for an agent stuck inside one tool call. */
 const HANG_GUARD_POLL_MS = 30_000;
 let hangGuardTimer: ReturnType<typeof setInterval> | null = null;
+let vaultTimer: ReturnType<typeof setInterval> | null = null;
 
 /** The hang guard's beat: Esc into a hung agent's terminal and tell it (and the
  *  boss) what happened; tell the owner when that did not help. */
@@ -7107,6 +7129,9 @@ function armAlwaysOnBeats(): void {
   if (workerWakeTimer) clearInterval(workerWakeTimer);
   workerWakeTimer = setInterval(() => { try { runWorkerWakeBeat(); } catch (e) { console.error('[worker-wake beat]', e); } }, WORKER_WAKE_POLL_MS);
   runWorkerWakeBeat(); // catch-up on arm — power-resume re-arms and drains the backlog
+  if (vaultTimer) clearInterval(vaultTimer);
+  setTimeout(() => { void vaultHistory.snapshot(); }, 60_000); // the history starts before agents edit
+  vaultTimer = setInterval(() => { void vaultHistory.snapshot().then((r) => { if (!r.ok) console.warn('[vault] snapshot failed:', r.error); else if (r.changed) console.log(`[vault] snapshot: ${r.changed} change(s)`); }); }, vaultCore.SNAPSHOT_MS);
   if (hangGuardTimer) clearInterval(hangGuardTimer);
   hangGuardTimer = setInterval(() => {
     try { runHangGuardBeat(); } catch (e) { console.error('[hang-guard beat]', e); }
