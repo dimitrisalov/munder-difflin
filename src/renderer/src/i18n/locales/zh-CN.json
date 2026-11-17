@@ -326,7 +326,7 @@
       "adding": "添加中…",
       "addFiles": "添加文件…",
       "vaultTitle": "Obsidian 仓库（知识库）",
-      "vaultDesc": "这台电脑上 Obsidian 仓库的文件夹（Windows 版 iCloud：iCloudDrive\\iCloud~md~obsidian\\<仓库>）。所有代理都会在其中搜索、添加和编辑笔记；每次更改都会保存在可恢复的历史中。更改后启动的代理才会生效。",
+      "vaultDesc": "这台电脑上 Obsidian 仓库的文件夹（Windows 版 iCloud：iCloudDrive\\iCloud~md~obsidian\\…）。所有代理都会在其中搜索、添加和编辑笔记；每次更改都会保存在可恢复的历史中。更改后启动的代理才会生效。",
       "vaultChoose": "选择文件夹…",
       "vaultChange": "更改…",
       "vaultNotes": "{{count}} 篇笔记",

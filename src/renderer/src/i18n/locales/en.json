@@ -326,7 +326,7 @@
       "adding": "adding…",
       "addFiles": "add files…",
       "vaultTitle": "Obsidian vault (knowledge base)",
-      "vaultDesc": "The folder of your Obsidian vault on this PC (iCloud for Windows: iCloudDrive\\iCloud~md~obsidian\\<vault>). Every agent searches it, adds and edits notes; every change is kept in a history you can restore from. Agents started after a change pick it up.",
+      "vaultDesc": "The folder of your Obsidian vault on this PC (iCloud for Windows: iCloudDrive\\iCloud~md~obsidian\\…). Every agent searches it, adds and edits notes; every change is kept in a history you can restore from. Agents started after a change pick it up.",
       "vaultChoose": "Choose folder…",
       "vaultChange": "Change…",
       "vaultNotes": "{{count}} notes",
